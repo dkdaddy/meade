@@ -17,8 +17,24 @@ export function lstDegrees(date, lonEastDeg) {
   return norm360(gmst + lonEastDeg);
 }
 
-// Azimuth is measured from true north, increasing eastwards.
-export function raDecToAltAz(raHours, decDeg, date, latDeg, lonEastDeg) {
+// Atmospheric refraction in degrees to ADD to a true altitude to get the apparent altitude (Saemundsson's
+// formula, standard atmosphere). A star appears higher than it really is; the lift grows quickly near the horizon,
+// so the altitude is clamped to keep it finite for the low stars we allow.
+export function refractionDeg(trueAltDeg) {
+  const h = Math.max(trueAltDeg, -1);
+  return 1.02 / Math.tan((h + 10.3 / (h + 5.11)) * RAD) / 60;
+}
+
+// Refraction in degrees to SUBTRACT from an apparent altitude to get the true altitude (Bennett's formula, the
+// inverse pairing of the above).
+export function apparentToTrueRefractionDeg(appAltDeg) {
+  const h = Math.max(appAltDeg, -1);
+  return 1 / Math.tan((h + 7.31 / (h + 4.4)) * RAD) / 60;
+}
+
+// Azimuth is measured from true north, increasing eastwards. By default the returned altitude is the apparent
+// (refracted) altitude, i.e. where the star is actually seen and therefore where the scope is centred on it.
+export function raDecToAltAz(raHours, decDeg, date, latDeg, lonEastDeg, { refract = true } = {}) {
   const ha = (lstDegrees(date, lonEastDeg) - raHours * 15) * RAD;
   const dec = decDeg * RAD;
   const lat = latDeg * RAD;
@@ -27,11 +43,13 @@ export function raDecToAltAz(raHours, decDeg, date, latDeg, lonEastDeg) {
     -Math.cos(dec) * Math.sin(ha),
     Math.sin(dec) * Math.cos(lat) - Math.cos(dec) * Math.sin(lat) * Math.cos(ha),
   );
-  return { alt: alt / RAD, az: norm360(az / RAD) };
+  const altDeg = alt / RAD;
+  return { alt: refract ? altDeg + refractionDeg(altDeg) : altDeg, az: norm360(az / RAD) };
 }
 
-export function altAzToRaDec(altDeg, azDeg, date, latDeg, lonEastDeg) {
-  const alt = altDeg * RAD;
+// Inverse of raDecToAltAz; the supplied altitude is treated as apparent and un-refracted before the conversion.
+export function altAzToRaDec(altDeg, azDeg, date, latDeg, lonEastDeg, { refract = true } = {}) {
+  const alt = (refract ? altDeg - apparentToTrueRefractionDeg(altDeg) : altDeg) * RAD;
   const az = azDeg * RAD;
   const lat = latDeg * RAD;
   const dec = Math.asin(clamp(Math.sin(alt) * Math.sin(lat) + Math.cos(alt) * Math.cos(lat) * Math.cos(az)));

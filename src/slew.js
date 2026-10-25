@@ -18,7 +18,10 @@ const REFINE_START_LEAD_DEG = 0.04; // first guess at how far the axis coasts af
 const REFINE_MAX_ATTEMPTS = 8;
 const PULSE_SETTLE_MS = 500;
 const STALL_MS = 4000;
-const PROBE_MAX_MS = 5000;
+// Altitude starts slowly and has large gear backlash, so any key press first winds through the slack before the
+// reading moves; the direction test, coarse stall watchdog and refine start-up all allow an axis `startGraceMs`
+// before concluding nothing is happening. PROBE_EXTRA_MS is the extra watch time on top of that grace.
+const PROBE_EXTRA_MS = 1500;
 const PROBE_MIN_MOVE_DEG = 0.005;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,6 +41,7 @@ const AXES = {
     label: 'altitude',
     plus: 'n',
     minus: 's',
+    startGraceMs: 4000, // slow to start and heavy backlash: wait this long for first motion before giving up
     read: async (scope) => {
       const r = await scope.readAlt();
       return { deg: r.deg, text: formatAlt(r.deg, 0) };
@@ -56,6 +60,7 @@ const AXES = {
     label: 'azimuth',
     plus: 'e',
     minus: 'w',
+    startGraceMs: 1500, // azimuth starts promptly and has little backlash
     // Azimuth is handled as degrees from home in (-180, 180], so a slew never crosses the 180 degree seam.
     read: async (scope) => {
       const r = await scope.readAz();
@@ -96,32 +101,44 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
     if (Math.abs(goal - cur.deg) <= tolerance) return { final: cur.deg, error: goal - cur.deg, text: cur.text };
 
     if (!session.keys[axisName]) {
-      // Direction test: press the key toward the target at the rate suited to the error size (never faster than Move),
-      // until the reading has moved, to learn which key raises it. The handset can take a moment to start moving.
+      // Direction test: hold the key toward the target and watch the reading to learn which key raises it. The key is
+      // held continuously (not pulsed) so a slow axis with large gear backlash has time to wind through the slack and
+      // actually start moving, rather than re-engaging the backlash from rest on every short pulse. :GA# / :GZ#
+      // feedback and the violation check run every poll, so the motion stays bounded and stops the instant movement is
+      // confirmed or a limit is reached.
       const err0 = goal - cur.deg;
       const testKey = err0 > 0 ? axis.plus : axis.minus;
       const otherKey = testKey === axis.plus ? axis.minus : axis.plus;
       const probeRate = Math.abs(err0) > 1 ? 'M' : REFINE_RATE;
+      const probeDeadline = Date.now() + axis.startGraceMs + PROBE_EXTRA_MS;
+      let signal = 0; // signed movement of greatest magnitude seen, measured from the start reading
       await scope.command(`:R${probeRate}#`);
       await scope.command(`:M${testKey}#`);
-      const probeStart = Date.now();
-      let afterTest = cur;
-      while (Date.now() - probeStart < PROBE_MAX_MS && Math.abs(afterTest.deg - cur.deg) < PROBE_MIN_MOVE_DEG) {
-        await sleep(POLL_MS);
-        if (isCancelled()) throw new CancelledError();
-        afterTest = await axis.read(scope);
-        const v = axis.violation(afterTest.deg);
-        if (v) throw new Error(`Stopped: ${v}.`);
+      try {
+        while (Date.now() < probeDeadline && Math.abs(signal) < PROBE_MIN_MOVE_DEG) {
+          await sleep(POLL_MS);
+          if (isCancelled()) throw new CancelledError();
+          const r = await axis.read(scope);
+          const delta = r.deg - cur.deg;
+          if (Math.abs(delta) > Math.abs(signal)) signal = delta;
+          const v = axis.violation(r.deg);
+          if (v) {
+            await scope.stopAll();
+            throw new Error(`Stopped: ${v}.`);
+          }
+        }
+      } finally {
+        await scope.stopAll();
       }
-      await scope.stopAll();
-      await sleep(250);
-      afterTest = await axis.read(scope);
-      const moved = afterTest.deg - cur.deg;
-      if (Math.abs(moved) < PROBE_MIN_MOVE_DEG) {
-        throw new Error(`No ${axis.label} movement detected during the direction test (clutch released, motors off or handset busy?).`);
+      await sleep(PULSE_SETTLE_MS);
+      const settled = await axis.read(scope);
+      const settledDelta = settled.deg - cur.deg;
+      if (Math.abs(settledDelta) > Math.abs(signal)) signal = settledDelta;
+      if (Math.abs(signal) < PROBE_MIN_MOVE_DEG) {
+        throw new Error(`The ${axis.label} reading did not change during the direction test (it stayed at ${cur.text}). The motor may not be driving this axis, or the handset is not reporting live ${axis.label}; check that ${axis.label} changes in "monitor" when you nudge it with the handset.`);
       }
-      session.keys[axisName] = { increaseKey: moved > 0 ? testKey : otherKey, decreaseKey: moved > 0 ? otherKey : testKey };
-      cur = afterTest;
+      session.keys[axisName] = { increaseKey: signal > 0 ? testKey : otherKey, decreaseKey: signal > 0 ? otherKey : testKey };
+      cur = await axis.read(scope);
       const afterTestViolation = axis.violation(cur.deg);
       if (afterTestViolation) throw new Error(`Stopped: ${afterTestViolation}.`);
     }
@@ -137,6 +154,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
       let lastDeg = cur.deg;
       const phaseStart = Date.now();
       let lastProgressAt = phaseStart;
+      const stallMs = Math.max(STALL_MS, axis.startGraceMs); // allow backlash take-up before calling it a stall
 
       for (;;) {
         const err = goal - cur.deg;
@@ -162,7 +180,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
         if (Math.abs(cur.deg - lastDeg) > 0.005) {
           lastDeg = cur.deg;
           lastProgressAt = Date.now();
-        } else if (phase.strict && Date.now() - lastProgressAt > STALL_MS) {
+        } else if (phase.strict && Date.now() - lastProgressAt > stallMs) {
           throw new Error(`Stopped: ${axis.label} stopped moving before reaching the target.`);
         }
       }
@@ -183,7 +201,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
       const dir = Math.sign(err);
       const key = dir > 0 ? increaseKey : decreaseKey;
       const startDeg = cur.deg;
-      const maxMs = 2000 + (Math.abs(err) / 0.05) * 1000;
+      const maxMs = axis.startGraceMs + (Math.abs(err) / 0.05) * 1000;
       const attemptStart = Date.now();
       let moving = false;
       let trigger = cur;
@@ -233,3 +251,31 @@ export async function slewCommand(portPath, axisName, target) {
     await scope.close();
   }
 }
+
+// Drives the scope back to home (Alt 0 / Az 0 in its reported frame): azimuth first, then altitude down to level,
+// so the tube stays raised while it swings round. This trusts the handset's reference (the "current alignment"):
+// reported 0/0 is home only while the handset has not been power-cycled or lost its position.
+export async function goHomeCommand(portPath) {
+  const scope = new Scope(portPath);
+  await scope.open();
+  process.once('SIGINT', () => {
+    scope
+      .stopAll()
+      .catch(() => {})
+      .finally(() => process.exit(130));
+  });
+  try {
+    const start = await scope.readAltAz();
+    console.log(`Scope reports Alt ${formatAlt(start.alt, 0)} Az ${formatAz(start.az, 0)}. Slewing to home (Alt 0 / Az 0). Ctrl+C stops the scope.`);
+    const session = newSession();
+    const onStatus = (s) => process.stdout.write(`\r  ${s.axis} ${s.reading}  to go ${signed(s.toGo)}  rate ${s.rate}   `);
+    await slewAxis(scope, 'az', 0, { onStatus, session });
+    await slewAxis(scope, 'alt', 0, { onStatus, session });
+    const end = await scope.readAltAz();
+    console.log(`\nAt home. Scope reads Alt ${formatAlt(end.alt)} Az ${formatAz(end.az)}.`);
+  } finally {
+    await scope.stopAll().catch(() => {});
+    await scope.close();
+  }
+}
+

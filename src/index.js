@@ -1,14 +1,16 @@
 import { parseArgs } from 'node:util';
-import { align, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
+import { align, homeCommand, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { resolveLocation } from './location.js';
 import { monitor } from './monitor.js';
 import { listStars } from './stars.js';
 import { parseDegrees } from './angles.js';
-import { slewCommand } from './slew.js';
+import { slewCommand, goHomeCommand } from './slew.js';
 import { trackCommand, twoStarCommand } from './twostar.js';
 
 const USAGE = `Usage:
   node src/index.js monitor [--port COM3] [--interval 500]
+  node src/index.js home [--port COM3]
+  node src/index.js go-home [--port COM3]           (slews the scope to Alt 0 / Az 0)
   node src/index.js slew-alt <deg>      (0 up to ${MAX_ALT_DEG}; negative: --to=-5)
   node src/index.js slew-az <deg>       (0-360, or --to=-90; measured from home, never crosses 180)
   node src/index.js stars [--all] [--lat D --lon D]
@@ -57,6 +59,10 @@ try {
     console.log(USAGE);
   } else if (command === 'monitor') {
     await monitor(values.port, Number(values.interval));
+  } else if (command === 'home') {
+    await homeCommand(values);
+  } else if (command === 'go-home') {
+    await goHomeCommand(values.port);
   } else if (command === 'align') {
     await align(values, positionals.slice(1).join(' ') || undefined);
   } else if (command === 'align2') {
