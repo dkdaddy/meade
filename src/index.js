@@ -5,6 +5,7 @@ import { monitor } from './monitor.js';
 import { listStars } from './stars.js';
 import { parseDegrees } from './angles.js';
 import { slewCommand } from './slew.js';
+import { trackCommand, twoStarCommand } from './twostar.js';
 
 const USAGE = `Usage:
   node src/index.js monitor [--port COM3] [--interval 500]
@@ -13,9 +14,17 @@ const USAGE = `Usage:
   node src/index.js stars [--all] [--lat D --lon D]
   node src/index.js align <star name> [--port COM3] [--lat D --lon D] [--declination D]
   node src/index.js align --ra HH:MM:SS --dec=[+-]DD:MM:SS [same options]
+  node src/index.js align2 <star1> <star2> [--port COM3] [--lat D --lon D] [--declination D]
+  node src/index.js track [star] [--port COM3]
 
 Notes:
-  stars lists the 100 brightest named stars that are currently usable (altitude ${MIN_ALT_DEG}-${MAX_ALT_DEG} deg).
+  align2 does a two-star alignment, then tracks the second star. It slews to star 1, you centre it with the handset
+  and press Enter, then the same for star 2. The alignment is saved to alignment.json. Quote names with spaces:
+  align2 "alpha centauri" vega. Pick stars at least 20 deg apart. The scope must read Alt 0 / Az 0 at the start.
+  track [star] loads the saved alignment, slews to the star (default: the last one) and tracks it. While tracking,
+  Enter pauses so you can centre the star by hand and press Enter again to sync; Esc resumes without syncing; q quits.
+  Tracking is done by the PC nudging the scope with move/stop commands; nothing is written to the controller.
+  stars lists the 200 brightest named stars that are currently usable (altitude ${MIN_ALT_DEG}-${MAX_ALT_DEG} deg).
   Star names are case-insensitive, spaces optional, unique prefixes work (align vega, align "rigil kent").
   Write negative values with '=', e.g. --dec=-16:42:58 --lon=-0.13
   This tool only reads from the controller, except slew-alt / slew-az, which send move, stop and move-rate
@@ -50,6 +59,10 @@ try {
     await monitor(values.port, Number(values.interval));
   } else if (command === 'align') {
     await align(values, positionals.slice(1).join(' ') || undefined);
+  } else if (command === 'align2') {
+    await twoStarCommand(values, positionals[1], positionals[2]);
+  } else if (command === 'track') {
+    await trackCommand(values, positionals.slice(1).join(' ') || undefined);
   } else if (command === 'slew-alt' || command === 'slew-az') {
     const raw = values.to ?? positionals[1];
     if (raw === undefined) throw new Error(`${command} needs a value in degrees, e.g. ${command} 30`);

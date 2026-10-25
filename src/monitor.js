@@ -1,14 +1,15 @@
+import { prettyReply } from './angles.js';
 import { Scope } from './lx200.js';
 
 const QUERIES = [
-  ['RA', ':GR#'],
-  ['Dec', ':GD#'],
-  ['Alt', ':GA#'],
-  ['Az', ':GZ#'],
+  ['RA', ':GR#', 'ra'],
+  ['Dec', ':GD#', 'angle'],
+  ['Alt', ':GA#', 'angle'],
+  ['Az', ':GZ#', 'angle'],
   ['Time', ':GL#'],
   ['Date', ':GC#'],
-  ['Lat', ':Gt#'],
-  ['Long', ':Gg#'],
+  ['Lat', ':Gt#', 'angle'],
+  ['Long', ':Gg#', 'angle'],
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -26,8 +27,9 @@ export async function monitor(portPath, intervalMs) {
 
   while (running) {
     const parts = [];
-    for (const [name, cmd] of QUERIES) {
-      parts.push(`${name}=${(await scope.queryOrNull(cmd)) ?? '--'}`);
+    for (const [name, cmd, kind] of QUERIES) {
+      const reply = await scope.queryOrNull(cmd);
+      parts.push(`${name}=${reply === null ? '--' : kind ? prettyReply(reply, kind) : reply}`);
     }
     console.log(`${new Date().toISOString()}  ${parts.join('  ')}`);
     await sleep(intervalMs);

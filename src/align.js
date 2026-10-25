@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { norm180, norm360, precessFromJ2000, raDecToAltAz } from './astro.js';
-import { formatDMS, parseDegrees, parseHours } from './angles.js';
+import { formatAlt, formatAz, formatDeg, parseDegrees, parseHours } from './angles.js';
 import { magneticDeclination, resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
@@ -9,7 +9,7 @@ import { findStar } from './stars.js';
 export const ALIGNMENT_FILE = new URL('../alignment.json', import.meta.url);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const signed = (deg) => `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}\u00b0`;
+const signed = (deg) => formatDeg(deg, { signed: true });
 
 // Limits are only reported: this tool never sends anything to the scope except read commands.
 export const MAX_AZ_FROM_HOME_DEG = 180;
@@ -56,14 +56,14 @@ export async function align(values, starName) {
   };
 
   const first = targetReading(now);
-  console.log(`Location : ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}  (${location.source}${location.accuracyMeters ? `, +/-${Math.round(location.accuracyMeters)} m` : ''})`);
+  console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source}${location.accuracyMeters ? `, +/-${Math.round(location.accuracyMeters)} m` : ''})`);
   console.log(`Time     : ${now.toISOString()} (PC clock, UTC)`);
-  console.log(`Mag decl : ${declination >= 0 ? '+' : ''}${declination.toFixed(2)}\u00b0  (home = scope Alt 0 / Az 0 = true azimuth ${homeTrueAz.toFixed(2)}\u00b0)`);
-  console.log(`Target   : ${star ? `${star.name} (mag ${star.mag}) ` : ''}true Alt ${formatDMS(first.trueAlt)}  Az ${first.trueAz.toFixed(2)}\u00b0`);
-  console.log(`Move     : scope should read Alt ${formatDMS(first.alt)}  Az ${first.az.toFixed(2)}\u00b0  (from home: up ${signed(first.alt)}, azimuth ${signed(norm180(first.az))})`);
+  console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0 = true azimuth ${formatAz(homeTrueAz)})`);
+  console.log(`Target   : ${star ? `${star.name} (mag ${star.mag}) ` : ''}true Alt ${formatAlt(first.trueAlt)}  Az ${formatAz(first.trueAz)}`);
+  console.log(`Move     : scope should read Alt ${formatAlt(first.alt)}  Az ${formatAz(first.az)}  (from home: up ${signed(first.alt)}, azimuth ${signed(norm180(first.az))})`);
 
-  if (first.alt < MIN_ALT_DEG) throw new Error(`Target is only ${first.alt.toFixed(1)}\u00b0 above the horizon (minimum ${MIN_ALT_DEG}\u00b0) - choose a higher one.`);
-  if (first.alt >= MAX_ALT_DEG) throw new Error(`Target is at altitude ${first.alt.toFixed(1)}\u00b0, above the ${MAX_ALT_DEG}\u00b0 limit - choose a lower one.`);
+  if (first.alt < MIN_ALT_DEG) throw new Error(`Target is only ${formatDeg(first.alt)} above the horizon (minimum ${MIN_ALT_DEG}\u00b0) - choose a higher one.`);
+  if (first.alt >= MAX_ALT_DEG) throw new Error(`Target is at altitude ${formatDeg(first.alt)}, above the ${MAX_ALT_DEG}\u00b0 limit - choose a lower one.`);
   if (Math.abs(norm180(first.az)) > MAX_AZ_FROM_HOME_DEG - 10) {
     console.log(`  Warning: target is within 10\u00b0 of the \u00b1${MAX_AZ_FROM_HOME_DEG}\u00b0 azimuth limit from home.`);
   }
@@ -75,7 +75,7 @@ export async function align(values, starName) {
     console.log(`Connected to ${values.port}: ${await scope.queryOrNull(':GVP#')} ${await scope.queryOrNull(':GVN#')}  (read-only)`);
 
     const start = await scope.readAltAz();
-    console.log(`Scope reports: Alt ${start.altText}  Az ${start.azText}`);
+    console.log(`Scope reports: Alt ${formatAlt(start.alt, 0)}  Az ${formatAz(start.az, 0)}`);
     if (Math.abs(start.alt) > HOME_TOLERANCE_DEG || Math.min(start.az, 360 - start.az) > HOME_TOLERANCE_DEG) {
       throw new Error(`At home the scope should report Alt 0 / Az 0 (within ${HOME_TOLERANCE_DEG}\u00b0). Put it at home and power-cycle the handset, then try again.`);
     }
@@ -96,7 +96,7 @@ export async function align(values, starName) {
           lastAz = r.az;
           const t = targetReading(new Date());
           const warning = r.alt >= MAX_ALT_DEG ? `ALTITUDE ${MAX_ALT_DEG}\u00b0 LIMIT` : Math.abs(travel) >= MAX_AZ_FROM_HOME_DEG ? `AZIMUTH \u00b1${MAX_AZ_FROM_HOME_DEG}\u00b0 LIMIT` : '';
-          process.stdout.write(`\r  scope Alt ${r.altText} Az ${r.azText} | to go: alt ${signed(t.alt - r.alt)} az ${signed(norm180(t.az - r.az))} | az from home ${signed(travel)} ${warning ? `!! ${warning} !!` : '                    '}`);
+          process.stdout.write(`\r  scope Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)} | to go: alt ${signed(t.alt - r.alt)} az ${signed(norm180(t.az - r.az))} | az from home ${signed(travel)} ${warning ? `!! ${warning} !!` : '                    '}`);
           if (warning && !warned) {
             warned = true;
             process.stdout.write(`\n  LIMIT REACHED: ${warning}. Stop and move back the other way.\n`);
@@ -134,7 +134,7 @@ export async function align(values, starName) {
     fs.writeFileSync(ALIGNMENT_FILE, JSON.stringify(record, null, 2) + '\n');
 
     console.log(`\nAligned at ${centredAt.toISOString()}.`);
-    console.log(`Scope reported Alt ${raw.altText} Az ${raw.azText}; truth was Alt ${formatDMS(truth.trueAlt)} Az ${truth.trueAz.toFixed(2)}\u00b0.`);
+    console.log(`Scope reported Alt ${formatAlt(raw.alt, 0)} Az ${formatAz(raw.az, 0)}; truth was Alt ${formatAlt(truth.trueAlt)} Az ${formatAz(truth.trueAz)}.`);
     console.log(`Offset (true = reported + offset): alt ${signed(offset.alt)}, az ${signed(offset.az)}; versus the home assumption: alt ${signed(record.correctionFromHomeAssumptionDeg.alt)}, az ${signed(record.correctionFromHomeAssumptionDeg.az)}.`);
     console.log(`Saved ${ALIGNMENT_FILE.pathname.replace(/^\/([A-Za-z]:)/, '$1')}`);
   } finally {

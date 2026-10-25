@@ -27,14 +27,45 @@ export function parseDegrees(text) {
   return parseSexagesimal(text, 'angle');
 }
 
-export function formatHMS(hours) {
-  const total = Math.round((((hours % 24) + 24) % 24) * 3600) % 86400;
-  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+// Splits an angle (degrees or hours) into whole units, minutes and seconds. Only the seconds carry decimals, and the
+// rounding carries upward so that 59.96 seconds never prints as 60.0.
+function sexagesimal(value, digits) {
+  const scale = 10 ** digits;
+  const units = Math.round(Math.abs(value) * 3600 * scale);
+  const secs = (units % (60 * scale)) / scale;
+  return {
+    whole: Math.floor(units / (3600 * scale)),
+    mins: pad(Math.floor(units / (60 * scale)) % 60),
+    secs: secs.toFixed(digits).padStart(digits ? digits + 3 : 2, '0'),
+  };
 }
 
-// "+DD:MM:SS" (degSep is the separator between degrees and minutes, '*' for the scope).
-export function formatDMS(degrees, degSep = ':') {
-  const total = Math.round(Math.abs(degrees) * 3600);
-  const sign = degrees < 0 ? '-' : '+';
-  return `${sign}${pad(Math.floor(total / 3600))}${degSep}${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+// "-08°10'04.3\"" (sign '+' shown only when `signed`).
+export function formatDeg(degrees, { signed = false, digits = 1 } = {}) {
+  const { whole, mins, secs } = sexagesimal(degrees, digits);
+  const isZero = whole === 0 && mins === '00' && Number(secs) === 0;
+  const sign = degrees < 0 && !isZero ? '-' : signed ? '+' : '';
+  return `${sign}${whole}\u00b0${mins}'${secs}"`;
+}
+
+// Altitudes always carry a sign; azimuths are shown in 0..360.
+export const formatAlt = (degrees, digits = 1) => formatDeg(degrees, { signed: true, digits });
+export const formatAz = (degrees, digits = 1) => formatDeg(((degrees % 360) + 360) % 360, { digits });
+
+// "05h15m51.1s"
+export function formatHours(hours, digits = 1) {
+  const { whole, mins, secs } = sexagesimal(((hours % 24) + 24) % 24, digits);
+  return `${pad(whole % 24)}h${mins}m${secs}s`;
+}
+
+// Rewrites the scope's raw replies in the same style: RA "HH:MM:SS" -> "HHhMMmSSs", angles "+DD*MM:SS" -> "+DD°MM'SS\"".
+export function prettyReply(text, kind) {
+  if (kind === 'ra') {
+    let m = /^(\d{2}):(\d{2}):(\d{2})$/.exec(text);
+    if (m) return `${m[1]}h${m[2]}m${m[3]}s`;
+    m = /^(\d{2}):(\d{2})\.(\d)$/.exec(text);
+    return m ? `${m[1]}h${m[2]}.${m[3]}m` : text;
+  }
+  const m = /^([+-]?\d{1,3})\*(\d{2})(?::(\d{2}))?$/.exec(text);
+  return m ? `${m[1]}\u00b0${m[2]}'${m[3] ? `${m[3]}"` : ''}` : text;
 }

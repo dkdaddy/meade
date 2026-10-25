@@ -1,7 +1,7 @@
-import { formatDMS } from './angles.js';
+import { formatAlt, formatAz } from './angles.js';
 import { precessFromJ2000, raDecToAltAz } from './astro.js';
 
-// The 100 brightest stars (by V magnitude) that have an IAU-approved proper name.
+// The 200 brightest stars (by V magnitude) that have an IAU-approved proper name.
 // Source: IAU Catalog of Star Names (WGSN), https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt
 // Columns: name, RA J2000 (degrees), Dec J2000 (degrees), V magnitude. Proper motion is ignored.
 const STARS = [
@@ -105,11 +105,123 @@ const STARS = [
   ["Ruchbah", 21.453964, 60.235284, 2.66],
   ["Muphrid", 208.671161, 18.397717, 2.68],
   ["Hassaleh", 74.248421, 33.1661, 2.69],
+  ["Lesath", 262.690979, -37.295813, 2.7],
+  ["Sheratan", 28.660046, 20.808031, 2.7],
+  ["Kaus Media", 275.248508, -29.828104, 2.72],
+  ["Tarazed", 296.564915, 10.613262, 2.72],
+  ["Athebyne", 245.997858, 61.514214, 2.73],
+  ["Yed Prior", 243.586411, -3.694323, 2.73],
+  ["Imai", 183.78632, -58.748927, 2.75],
+  ["Zubenelgenubi", 222.719638, -16.041777, 2.75],
+  ["Cebalrai", 265.868136, 4.5673, 2.76],
+  ["Cursa", 76.96244, -5.086446, 2.78],
+  ["Kornephoros", 247.554998, 21.489611, 2.78],
+  ["Rastaban", 262.608174, 52.301389, 2.79],
+  ["Hatysa", 83.858258, -5.909901, 2.8],
+  ["Kaus Borealis", 276.992668, -25.421701, 2.82],
+  ["Paikauhale", 248.970637, -28.216017, 2.82],
+  ["Algenib", 3.308963, 15.183594, 2.83],
+  ["Nihal", 82.061346, -20.759441, 2.83],
+  ["Tureis", 121.886037, -24.304324, 2.83],
+  ["Alcyone", 56.871152, 24.105136, 2.85],
+  ["Deneb Algedi", 326.760184, -16.127287, 2.85],
+  ["Vindemiatrix", 195.544157, 10.959149, 2.85],
+  ["Tejat", 95.740112, 22.513583, 2.87],
+  ["Acamar", 44.565311, -40.304672, 2.88],
+  ["Albaldah", 287.440971, -21.023615, 2.88],
+  ["Cor Caroli", 194.006943, 38.318376, 2.89],
+  ["Fang", 239.712972, -26.114108, 2.89],
+  ["Gomeisa", 111.787674, 8.289316, 2.89],
+  ["Alniyat", 245.297149, -25.592792, 2.9],
+  ["Fawaris", 296.243658, 45.13081, 2.9],
+  ["Sadalsuud", 322.889715, -5.571176, 2.9],
+  ["Matar", 340.750579, 30.221244, 2.93],
+  ["Algorab", 187.466063, -16.515431, 2.94],
+  ["Sadalmelik", 331.445983, -0.319849, 2.95],
+  ["Tianguan", 84.411189, 21.142544, 2.97],
+  ["Zaurak", 59.50736, -13.508516, 2.97],
+  ["Alnasl", 271.452025, -30.4241, 2.98],
+  ["Okab", 286.352533, 13.863477, 2.99],
+  ["Aldhanab", 328.482192, -37.364855, 3],
+  ["Pherkad", 230.18215, 71.834017, 3],
+  ["Xamidimura", 252.96763, -38.04738, 3],
+  ["Furud", 95.0783, -30.063367, 3.02],
+  ["Almaaz", 75.492219, 43.823307, 3.03],
+  ["Seginus", 218.019466, 38.308251, 3.04],
+  ["Dabih", 305.252803, -14.781405, 3.05],
+  ["Mebsuta", 100.983026, 25.131127, 3.06],
+  ["Tania Australis", 155.58225, 41.499519, 3.06],
+  ["Altais", 288.13875, 67.661541, 3.07],
+  ["Sarin", 258.757963, 24.839204, 3.12],
+  ["Talitha", 134.80189, 48.041826, 3.12],
+  ["Wazn", 87.739968, -35.76831, 3.12],
+  ["Aldhibah", 257.19665, 65.714684, 3.17],
+  ["Haedus", 76.628722, 41.234476, 3.18],
+  ["Fuyue", 267.464503, -37.043305, 3.19],
+  ["Tabit", 72.460045, 6.961275, 3.19],
+  ["Errai", 354.836655, 77.632313, 3.21],
+  ["Alfirk", 322.164987, 70.560715, 3.23],
+  ["Yed Posterior", 244.580374, -4.69251, 3.23],
+  ["Brachium", 226.017567, -25.281961, 3.25],
+  ["Sulafat", 284.735928, 32.689557, 3.25],
+  ["Skat", 343.662556, -15.820827, 3.27],
+  ["Edasich", 231.232396, 58.966063, 3.29],
+  ["Megrez", 183.856503, 57.032615, 3.32],
+  ["Propus", 93.719405, 22.506794, 3.32],
+  ["Chertan", 168.560019, 15.429571, 3.33],
+  ["Alzirr", 101.322351, 12.895592, 3.35],
+  ["Muscida", 127.566128, 60.71817, 3.35],
+  ["Segin", 28.598857, 63.670101, 3.35],
+  ["Albireo", 292.680351, 27.959692, 3.37],
+  ["Rasalgethi", 258.66191, 14.390333, 3.37],
+  ["Heze", 203.6733, -0.59582, 3.38],
+  ["Meissa", 83.784486, 9.934156, 3.39],
+  ["Minelauva", 193.900869, 3.39747, 3.39],
+  ["Homam", 340.365503, 10.831363, 3.41],
+  ["Mothallah", 28.27045, 29.578826, 3.42],
+  ["Adhafera", 154.172567, 23.417312, 3.43],
+  ["Porrima", 190.415181, -1.449373, 3.44],
+  ["Azmidi", 117.323563, -24.859786, 3.45],
+  ["Tania Borealis", 154.274095, 42.914356, 3.45],
+  ["Achird", 12.276213, 57.815187, 3.46],
+  ["Alula Borealis", 169.619737, 33.094305, 3.49],
+  ["Ashlesha", 131.693794, 6.418809, 3.49],
+  ["Nekkar", 225.48651, 40.390567, 3.49],
+  ["Nganurganity", 105.429782, -27.93483, 3.49],
+  ["Sadalbari", 342.500809, 24.601577, 3.51],
+  ["Biham", 332.549939, 6.197863, 3.52],
+  ["Subra", 145.28764, 9.892308, 3.52],
+  ["Wasat", 110.030749, 21.982316, 3.52],
+  ["Ain", 67.154163, 19.180435, 3.53],
+  ["Rana", 55.812086, -9.763392, 3.53],
+  ["Tarf", 124.128838, 9.185544, 3.53],
+  ["Kaffaljidhma", 40.825163, 3.235816, 3.56],
+  ["Pipirima", 253.083939, -38.017535, 3.56],
+  ["Algedi", 304.513566, -12.544852, 3.58],
+  ["Ginan", 185.340039, -60.401147, 3.59],
+  ["Nembus", 24.498154, 48.628214, 3.59],
+  ["Zavijava", 177.673826, 1.764717, 3.59],
+  ["Sheliak", 282.519978, 33.362668, 3.6],
+  ["Bharani", 42.495972, 27.260507, 3.61],
+  ["Atlas", 57.290597, 24.053415, 3.62],
+  ["Rotanev", 309.387235, 14.595115, 3.64],
 ];
 
 export const STAR_LIST = STARS.map(([name, raDeg, decDeg, mag]) => ({ name, raHours: raDeg / 15, decDeg, mag }));
 
 const key = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
 
 // Exact (case/space-insensitive) match first, then a unique prefix match.
 export function findStar(query) {
@@ -119,13 +231,18 @@ export function findStar(query) {
   const matches = STAR_LIST.filter((s) => key(s.name).startsWith(q));
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) throw new Error(`"${query}" is ambiguous: ${matches.map((s) => s.name).join(', ')}`);
-  throw new Error(`Unknown star "${query}". Run "stars" to list the available names.`);
+  const close = STAR_LIST.map((s) => ({ s, d: editDistance(q, key(s.name)) }))
+    .filter((x) => x.d <= Math.max(1, Math.floor(q.length / 4)))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 3)
+    .map((x) => x.s.name);
+  throw new Error(`Unknown star "${query}".${close.length ? ` Did you mean ${close.join(', ')}?` : ''} Run "stars" to list the available names.`);
 }
 
 // Prints the catalogue with each star's current altitude/azimuth. Stars outside the allowed
 // altitude window are hidden unless showAll is set.
 export function listStars({ location, minAlt, maxAlt, showAll, now = new Date() }) {
-  console.log(`${'Name'.padEnd(18)} ${'Mag'.padStart(5)}  ${'Alt'.padStart(9)}  ${'Az'.padStart(7)}`);
+  console.log(`${'Name'.padEnd(18)} ${'Mag'.padStart(5)}  ${'Alt'.padStart(10)}  ${'Az'.padStart(10)}`);
   let shown = 0;
   for (const star of STAR_LIST) {
     const of = precessFromJ2000(star.raHours, star.decDeg, now);
@@ -133,7 +250,7 @@ export function listStars({ location, minAlt, maxAlt, showAll, now = new Date() 
     const ok = alt >= minAlt && alt < maxAlt;
     if (!ok && !showAll) continue;
     shown += 1;
-    console.log(`${star.name.padEnd(18)} ${star.mag.toFixed(2).padStart(5)}  ${formatDMS(alt).padStart(9)}  ${az.toFixed(1).padStart(6)}\u00b0${ok ? '' : '  (not usable)'}`);
+    console.log(`${star.name.padEnd(18)} ${star.mag.toFixed(2).padStart(5)}  ${formatAlt(alt, 0).padStart(10)}  ${formatAz(az, 0).padStart(10)}${ok ? '' : '  (not usable)'}`);
   }
   console.log(`\n${shown} of ${STAR_LIST.length} stars shown (usable: altitude ${minAlt}\u00b0 to ${maxAlt}\u00b0).`);
 }
