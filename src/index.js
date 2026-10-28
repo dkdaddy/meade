@@ -12,7 +12,7 @@ const USAGE = `Usage:
   node src/index.js home [--port COM3]
   node src/index.js go-home [--port COM3]           (slews the scope to Alt 0 / Az 0)
   node src/index.js slew-alt <deg>      (0 up to ${MAX_ALT_DEG}; negative: --to=-5)
-  node src/index.js slew-az <deg>       (0-360, or --to=-90; measured from home, never crosses 180)
+  node src/index.js slew-az <deg>       (within 300 of home, e.g. 0-300 or --to=-90)
   node src/index.js stars [--all] [--lat D --lon D]
   node src/index.js align <star name> [--port COM3] [--lat D --lon D] [--declination D]
   node src/index.js align --ra HH:MM:SS --dec=[+-]DD:MM:SS [same options]
@@ -32,7 +32,7 @@ Notes:
   This tool only reads from the controller, except slew-alt / slew-az, which send move, stop and move-rate
   commands and nothing else (no settings, time, site, target or sync). You move the scope yourself for align.
   slew-alt / slew-az work in the scope's own reported frame (Alt 0 / Az 0 = home), step down through the
-  Slew/Move/Center/Guide rates, and stop if a limit is hit (altitude -1..${MAX_ALT_DEG}, azimuth within 179 of home).
+  Slew/Move/Center/Guide rates, and stop if a limit is hit (altitude -1..${MAX_ALT_DEG}, azimuth within 300 of home).
   align expects the scope to report Alt 0 / Az 0 at home (level, pointing magnetic north).
   --ra/--dec are taken as of-date; star names are J2000 and are precessed automatically.`;
 

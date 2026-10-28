@@ -9,8 +9,18 @@ import { Scope } from './lx200.js';
 // Nothing but motion commands is sent: no settings, time, site, target or sync commands.
 
 const ALT_FLOOR_DEG = -1; // hard stop: never let the tube point (meaningfully) below the horizon
-const AZ_STOP_DEG = 179; // hard stop: +/-180 from home, with a small margin
-export const AZ_MAX_TARGET_DEG = 175;
+const AZ_STOP_DEG = 301; // hard stop: +/-300 from home, with 1 deg settle margin
+export const AZ_MAX_TARGET_DEG = 300;
+
+export function bestAzFromHome(dialAz, curAzFromHome = 0, maxTargetDeg = AZ_MAX_TARGET_DEG) {
+  const norm = ((dialAz % 360) + 360) % 360;
+  const candidates = [norm, norm - 360].filter((deg) => Math.abs(deg) <= maxTargetDeg);
+  if (candidates.length === 0) {
+    return norm <= 180 ? norm : norm - 360;
+  }
+  candidates.sort((a, b) => Math.abs(a - curAzFromHome) - Math.abs(b - curAzFromHome));
+  return candidates[0];
+}
 const TOLERANCE_DEG = 0.03; // about 2 arcminutes
 const POLL_MS = 80;
 const REFINE_RATE = 'C'; // the Guide rate (:RG#) does not visibly move the Autostar axes
@@ -61,16 +71,37 @@ const AXES = {
     plus: 'e',
     minus: 'w',
     startGraceMs: 1500, // azimuth starts promptly and has little backlash
-    // Azimuth is handled as degrees from home in (-180, 180], so a slew never crosses the 180 degree seam.
-    read: async (scope) => {
+    // Azimuth is handled as unwrapped degrees from home in [-300, 300].
+    read: async (scope, session, goal) => {
       const r = await scope.readAz();
+      if (session) {
+        if (session.az === undefined) {
+          const candidates = [r.deg, r.deg - 360].filter((d) => Math.abs(d) <= AZ_STOP_DEG);
+          if (candidates.length === 1) {
+            session.az = candidates[0];
+          } else if (candidates.length > 1) {
+            const ref = goal !== undefined ? goal : 0;
+            candidates.sort((a, b) => Math.abs(a - ref) - Math.abs(b - ref));
+            session.az = candidates[0];
+          } else {
+            session.az = norm180(r.deg);
+          }
+          session.lastRawAz = r.deg;
+        } else {
+          const delta = norm180(r.deg - session.lastRawAz);
+          session.az += delta;
+          session.lastRawAz = r.deg;
+        }
+        return { deg: session.az, text: formatAz(r.deg, 0) };
+      }
       return { deg: norm180(r.deg), text: formatAz(r.deg, 0) };
     },
-    violation: (deg) => (Math.abs(deg) >= AZ_STOP_DEG ? `azimuth ${signed(deg)} from home is at the \u00b1180\u00b0 limit` : null),
+    violation: (deg) => (Math.abs(deg) >= AZ_STOP_DEG ? `azimuth ${signed(deg)} from home is at the \u00b1300\u00b0 limit` : null),
     goal: (target) => {
-      const s = norm180(target);
-      if (Math.abs(s) > AZ_MAX_TARGET_DEG) throw new Error(`Azimuth target ${signed(s)} from home is too close to the \u00b1180\u00b0 limit (max \u00b1${AZ_MAX_TARGET_DEG}\u00b0)`);
-      return s;
+      if (Math.abs(target) > AZ_MAX_TARGET_DEG) {
+        throw new Error(`Azimuth target ${signed(target)} from home is too close to the \u00b1300\u00b0 limit (max \u00b1${AZ_MAX_TARGET_DEG}\u00b0)`);
+      }
+      return target;
     },
   },
 };
@@ -92,8 +123,10 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
   if (!Number.isFinite(target)) throw new Error('Target must be a number of degrees');
   const goal = axis.goal(target);
 
+  const readCur = () => axis.read(scope, session, goal);
+
   try {
-    let cur = await axis.read(scope);
+    let cur = await readCur();
     const startViolation = axis.violation(cur.deg);
     if (startViolation) {
       throw new Error(`Refusing to move: ${startViolation}. Put the scope at home and power-cycle the handset so it reads Alt 0 / Az 0.`);
@@ -118,7 +151,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
         while (Date.now() < probeDeadline && Math.abs(signal) < PROBE_MIN_MOVE_DEG) {
           await sleep(POLL_MS);
           if (isCancelled()) throw new CancelledError();
-          const r = await axis.read(scope);
+          const r = await readCur();
           const delta = r.deg - cur.deg;
           if (Math.abs(delta) > Math.abs(signal)) signal = delta;
           const v = axis.violation(r.deg);
@@ -131,14 +164,14 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
         await scope.stopAll();
       }
       await sleep(PULSE_SETTLE_MS);
-      const settled = await axis.read(scope);
+      const settled = await readCur();
       const settledDelta = settled.deg - cur.deg;
       if (Math.abs(settledDelta) > Math.abs(signal)) signal = settledDelta;
       if (Math.abs(signal) < PROBE_MIN_MOVE_DEG) {
         throw new Error(`The ${axis.label} reading did not change during the direction test (it stayed at ${cur.text}). The motor may not be driving this axis, or the handset is not reporting live ${axis.label}; check that ${axis.label} changes in "monitor" when you nudge it with the handset.`);
       }
       session.keys[axisName] = { increaseKey: signal > 0 ? testKey : otherKey, decreaseKey: signal > 0 ? otherKey : testKey };
-      cur = await axis.read(scope);
+      cur = await readCur();
       const afterTestViolation = axis.violation(cur.deg);
       if (afterTestViolation) throw new Error(`Stopped: ${afterTestViolation}.`);
     }
@@ -169,7 +202,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
         }
         await sleep(POLL_MS);
         if (isCancelled()) throw new CancelledError();
-        cur = await axis.read(scope);
+        cur = await readCur();
 
         const violation = axis.violation(cur.deg);
         if (violation) throw new Error(`Stopped: ${violation}.`);
@@ -187,7 +220,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
 
       await scope.stopAll();
       await sleep(250); // let the axis come to rest before reading or changing rate
-      cur = await axis.read(scope);
+      cur = await readCur();
     }
 
     // Final approach at the Center rate. The key is held until the axis has visibly started moving (the handset lags
@@ -209,7 +242,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
       for (;;) {
         await sleep(POLL_MS);
         if (isCancelled()) throw new CancelledError();
-        cur = await axis.read(scope);
+        cur = await readCur();
         const violation = axis.violation(cur.deg);
         if (violation) throw new Error(`Stopped: ${violation}.`);
         const remaining = (goal - cur.deg) * dir;
@@ -221,7 +254,7 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
       }
       await scope.stopAll();
       await sleep(PULSE_SETTLE_MS);
-      cur = await axis.read(scope);
+      cur = await readCur();
       const coast = (cur.deg - trigger.deg) * dir; // distance travelled after release
       if (moving && coast > 0) lead = Math.min(0.25, Math.max(0.01, coast));
       session.lead[axisName] = lead;

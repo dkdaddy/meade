@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const signed = (deg) => formatDeg(deg, { signed: true });
 
 // Limits are only reported: this tool never sends anything to the scope except read commands.
-export const MAX_AZ_FROM_HOME_DEG = 180;
+export const MAX_AZ_FROM_HOME_DEG = 300;
 export const MIN_ALT_DEG = 5;
 // The 75 deg ceiling is also deliberate for tracking: near the zenith the azimuth rate of an alt-az mount diverges,
 // so keeping targets below it holds the azimuth slews to sane speeds.

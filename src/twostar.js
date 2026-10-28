@@ -5,7 +5,7 @@ import { ALIGNMENT_FILE, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { magneticDeclination, resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
-import { AZ_MAX_TARGET_DEG, CancelledError, newSession, slewAxis } from './slew.js';
+import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis } from './slew.js';
 import { openKeys } from './keys.js';
 import { altAzToVec, angleBetweenDeg, bestRotation, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoStarRotation, vecToAltAz } from './pointing.js';
 
@@ -46,9 +46,9 @@ export function starTrueAltAz(star, when, location) {
 }
 
 // Where the scope must read (its own frame) to point at the true Alt/Az `t`, given scope->true rotation R.
-export function scopeTarget(R, t) {
+export function scopeTarget(R, t, curAzFromHome = 0) {
   const s = vecToAltAz(mulMV(transpose(R), altAzToVec(t.alt, t.az)));
-  return { alt: s.alt, az: s.az, azFromHome: norm180(s.az) };
+  return { alt: s.alt, az: s.az, azFromHome: bestAzFromHome(s.az, curAzFromHome) };
 }
 
 export function reachProblem(star, t, s) {
@@ -69,8 +69,9 @@ async function capture(ctx, star, kind) {
 }
 
 async function gotoStar(ctx, star, R) {
+  const curAz = ctx.session?.az ?? 0;
   const t = starTrueAltAz(star, new Date(), ctx.location);
-  const s = scopeTarget(R, t);
+  const s = scopeTarget(R, t, curAz);
   const problem = reachProblem(star, t, s);
   if (problem) throw new Error(problem);
   ctx.log(`${star.name}: true Alt ${formatAlt(t.alt)} Az ${formatAz(t.az)}; scope should read Alt ${formatAlt(s.alt)} Az ${formatAz(s.az)}. Slewing...`);
@@ -94,7 +95,7 @@ async function waitCentred(ctx, star, R) {
   while (!done) {
     try {
       const r = await ctx.scope.readAltAz();
-      const s = scopeTarget(R, starTrueAltAz(star, new Date(), ctx.location));
+      const s = scopeTarget(R, starTrueAltAz(star, new Date(), ctx.location), ctx.session?.az ?? 0);
       ctx.status(`scope Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)} | star predicted at Alt ${formatAlt(s.alt)} Az ${formatAz(s.az)} | Enter = centred`);
     } catch {
       // ignore a missed poll
@@ -249,8 +250,9 @@ export async function runTrack(ctx, star, model) {
       }
 
       try {
+        const curAz = ctx.session?.az ?? 0;
         const t = starTrueAltAz(star, new Date(), ctx.location);
-        const s = scopeTarget(model.R, t);
+        const s = scopeTarget(model.R, t, curAz);
         const problem = reachProblem(star, t, s);
         if (problem) {
           ctx.log(`\n${problem}. Tracking stopped.`);
@@ -268,14 +270,14 @@ export async function runTrack(ctx, star, model) {
           // Aim each axis one trigger-width ahead of the star, timed from that axis's own drift rate, so the error
           // sweeps symmetrically either side of centre instead of sawtoothing from 0 to the trigger.
           const dtSec = TRACK_DRIFT_SAMPLE_MS / 1000;
-          const sFut = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + TRACK_DRIFT_SAMPLE_MS), ctx.location));
+          const sFut = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + TRACK_DRIFT_SAMPLE_MS), ctx.location), curAz);
           const leadMs = (deltaDeg) => clampRange((TRACK_AHEAD_DEG * dtSec) / Math.max(Math.abs(deltaDeg), 1e-6) * 1000, TRACK_MIN_LEAD_MS, TRACK_MAX_LEAD_MS);
           if (Math.abs(eAz) > TRACK_TRIGGER_DEG) {
-            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(norm180(sFut.azFromHome - s.azFromHome))), ctx.location));
+            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(sFut.azFromHome - s.azFromHome)), ctx.location), curAz);
             await slewAxis(ctx.scope, 'az', aim.azFromHome, opts);
           }
           if (Math.abs(eAlt) > TRACK_TRIGGER_DEG) {
-            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(sFut.alt - s.alt)), ctx.location));
+            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(sFut.alt - s.alt)), ctx.location), curAz);
             await slewAxis(ctx.scope, 'alt', aim.alt, opts);
           }
         }
@@ -344,7 +346,7 @@ export async function twoStarCommand(values, name1, name2) {
   const R0 = rotationZ(declination);
   for (const star of [star1, star2]) {
     const t = starTrueAltAz(star, now, location);
-    const problem = reachProblem(star, t, scopeTarget(R0, t));
+    const problem = reachProblem(star, t, scopeTarget(R0, t, 0));
     if (problem) throw new Error(problem);
     if (t.alt < MIN_ALIGN_ALT_DEG) {
       throw new Error(`${star.name} is only ${formatDeg(t.alt)} above the horizon; choose alignment stars above ${MIN_ALIGN_ALT_DEG}\u00b0 so refraction and seeing do not spoil the fit.`);
