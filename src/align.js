@@ -47,24 +47,26 @@ function ask(rl, prompt) {
 }
 
 // Read-only alignment. The scope's reported Alt/Az is the frame: Alt 0 / Az 0 is the home pose
-// (level, pointing magnetic north). The PC works out where the star really is, tells you how far to move,
+// (level, pointing magnetic north). The PC works out where the star/planet really is, tells you how far to move,
 // and records the difference between what the scope reports and the truth when you press Enter.
 export async function align(values, starName) {
   const haveCoords = values.ra !== undefined || values.dec !== undefined;
-  if (starName && haveCoords) throw new Error('Give either a star name or --ra/--dec, not both.');
+  if (starName && haveCoords) throw new Error('Give either a target name or --ra/--dec, not both.');
   if (!starName && (values.ra === undefined || values.dec === undefined)) {
-    throw new Error('align needs a star name (e.g. align Vega; run the stars command for the list) or --ra and --dec');
+    throw new Error('align needs a star or planet name (e.g. align Vega or align Jupiter; run the stars or planets command for the list) or --ra and --dec');
   }
 
   const location = await resolveLocation(values);
   const now = new Date();
 
-  // Named stars are J2000 catalogue positions, so bring them to the current epoch.
+  // Named stars are J2000 catalogue positions (brought to current epoch); planets are calculated of-date.
   let target;
   let star = null;
   if (starName) {
     star = findStar(starName);
-    target = precessFromJ2000(star.raHours, star.decDeg, now);
+    target = (star.kind === 'planet' || typeof star.raDec === 'function')
+      ? star.raDec(now)
+      : precessFromJ2000(star.raHours, star.decDeg, now);
   } else {
     target = { raHours: parseHours(values.ra), decDeg: parseDegrees(values.dec) };
     if (Math.abs(target.decDeg) > 90) throw new Error('Dec must be within +/-90 degrees');
@@ -75,15 +77,19 @@ export async function align(values, starName) {
 
   // Where the scope should read when it is pointing at the target (scope az 0 = magnetic north).
   const targetReading = (when) => {
-    const t = raDecToAltAz(target.raHours, target.decDeg, when, location.latitude, location.longitude);
-    return { trueAlt: t.alt, trueAz: t.az, alt: t.alt, az: norm360(t.az - homeTrueAz) };
+    const coords = (star && (star.kind === 'planet' || typeof star.raDec === 'function'))
+      ? star.raDec(when)
+      : target;
+    const t = raDecToAltAz(coords.raHours, coords.decDeg, when, location.latitude, location.longitude);
+    return { trueAlt: t.alt, trueAz: t.az, alt: t.alt, az: norm360(t.az - homeTrueAz), coords };
   };
 
   const first = targetReading(now);
+  const magStr = star?.mag !== undefined ? `(mag ${typeof star.mag === 'number' ? star.mag.toFixed(1) : star.mag}) ` : '';
   console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source}${location.accuracyMeters ? `, +/-${Math.round(location.accuracyMeters)} m` : ''})`);
   console.log(`Time     : ${now.toISOString()} (PC clock, UTC)`);
   console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0 = true azimuth ${formatAz(homeTrueAz)})`);
-  console.log(`Target   : ${star ? `${star.name} (mag ${star.mag}) ` : ''}true Alt ${formatAlt(first.trueAlt)}  Az ${formatAz(first.trueAz)}`);
+  console.log(`Target   : ${star ? `${star.name} ${magStr}` : ''}true Alt ${formatAlt(first.trueAlt)}  Az ${formatAz(first.trueAz)}`);
   console.log(`Move     : scope should read Alt ${formatAlt(first.alt)}  Az ${formatAz(first.az)}  (from home: up ${signed(first.alt)}, azimuth ${signed(norm180(first.az))})`);
 
   if (first.alt < MIN_ALT_DEG) throw new Error(`Target is only ${formatDeg(first.alt)} above the horizon (minimum ${MIN_ALT_DEG}\u00b0) - choose a higher one.`);
@@ -149,7 +155,7 @@ export async function align(values, starName) {
       magneticDeclinationDeg: declination,
       home: { scopeAlt: 0, scopeAz: 0, trueAlt: 0, trueAz: homeTrueAz, assumed: 'level, pointing magnetic north' },
       limits: { azimuthFromHomeDeg: MAX_AZ_FROM_HOME_DEG, minAltitudeDeg: MIN_ALT_DEG, maxAltitudeDeg: MAX_ALT_DEG },
-      target: { name: star?.name ?? null, raHours: target.raHours, decDeg: target.decDeg, epoch: 'of date' },
+      target: { name: star?.name ?? null, kind: star?.kind ?? 'star', raHours: truth.coords?.raHours ?? target.raHours, decDeg: truth.coords?.decDeg ?? target.decDeg, epoch: 'of date' },
       centred: { scopeAlt: raw.alt, scopeAz: raw.az, trueAlt: truth.trueAlt, trueAz: truth.trueAz },
       offsetDeg: offset,
       correctionFromHomeAssumptionDeg: { alt: offset.alt, az: norm180(offset.az - homeTrueAz) },

@@ -9,26 +9,26 @@ import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis
 import { openKeys } from './keys.js';
 import { altAzToVec, angleBetweenDeg, bestRotation, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoStarRotation, vecToAltAz } from './pointing.js';
 
-// Two-star alignment and PC-driven tracking.
+// Two-star/planet alignment and PC-driven tracking.
 // The scope only ever receives motion commands (move / stop / move-rate) and read commands: no settings, time,
 // site, target or sync commands. The alignment lives entirely on the PC as a rotation between the scope's reported
-// Alt/Az and the true Alt/Az; tracking is the PC repeatedly nudging the scope toward where the star is now.
+// Alt/Az and the true Alt/Az; tracking is the PC repeatedly nudging the scope toward where the target is now.
 
 const HOME_TOLERANCE_DEG = 2;
 const MIN_STAR_SEPARATION_DEG = 20;
 const MAX_RESIDUAL_WARN_DEG = 1;
-const TRACK_TRIGGER_DEG = 0.04; // start a correction when the star is this far (about 2.4') from the centre
+const TRACK_TRIGGER_DEG = 0.04; // start a correction when the target is this far (about 2.4') from the centre
 const TRACK_TOLERANCE_DEG = 0.02;
-// A correction aims the axis one trigger-width ahead of the star (in the drift direction) so the error sweeps
+// A correction aims the axis one trigger-width ahead of the target (in the drift direction) so the error sweeps
 // symmetrically from -trigger to +trigger, roughly halving how often a pulse is needed. The lead time is derived
-// from the star's measured drift rate and clamped to this window.
+// from the target's measured drift rate and clamped to this window.
 const TRACK_AHEAD_DEG = TRACK_TRIGGER_DEG;
 const TRACK_MIN_LEAD_MS = 1500;
 const TRACK_MAX_LEAD_MS = 20000;
 const TRACK_DRIFT_SAMPLE_MS = 4000; // baseline over which the drift rate is measured
 const TRACK_CYCLE_MS = 1000;
 const MAX_REFERENCES = 20;
-const MIN_ALIGN_ALT_DEG = 15; // alignment stars should be well up: refraction and seeing blur low stars
+const MIN_ALIGN_ALT_DEG = 15; // alignment targets should be well up: refraction and seeing blur low targets
 const RAD = Math.PI / 180;
 const clampRange = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -40,8 +40,15 @@ async function sleepUntil(ms, stop) {
   while (Date.now() < end && !stop()) await sleep(Math.min(100, end - Date.now()));
 }
 
+export function targetRaDec(target, when = new Date()) {
+  if (target.kind === 'planet' || typeof target.raDec === 'function') {
+    return target.raDec(when);
+  }
+  return precessFromJ2000(target.raHours, target.decDeg, when);
+}
+
 export function starTrueAltAz(star, when, location) {
-  const p = precessFromJ2000(star.raHours, star.decDeg, when); // catalogue is J2000
+  const p = targetRaDec(star, when);
   return raDecToAltAz(p.raHours, p.decDeg, when, location.latitude, location.longitude);
 }
 
@@ -96,7 +103,7 @@ async function waitCentred(ctx, star, R) {
     try {
       const r = await ctx.scope.readAltAz();
       const s = scopeTarget(R, starTrueAltAz(star, new Date(), ctx.location), ctx.session?.az ?? 0);
-      ctx.status(`scope Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)} | star predicted at Alt ${formatAlt(s.alt)} Az ${formatAz(s.az)} | Enter = centred`);
+      ctx.status(`scope Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)} | target predicted at Alt ${formatAlt(s.alt)} Az ${formatAz(s.az)} | Enter = centred`);
     } catch {
       // ignore a missed poll
     }
@@ -139,7 +146,7 @@ function addReference(references, pair) {
 
 const pairVecs = (p) => ({ s: sVec(p), t: tVec(p) });
 
-// Least-squares scope->true rotation over every reference star, refined from the current estimate.
+// Least-squares scope->true rotation over every reference star/planet, refined from the current estimate.
 function fitRotation(references, seed) {
   return bestRotation(references.map(pairVecs), seed);
 }
@@ -165,9 +172,9 @@ function createModel({ R, references, location, declination, target }) {
     persist() {
       saveAlignment({ location, declination, R: model.R, references: model.references, target: model.target });
     },
-    // Folds a freshly centred star into the fit and re-solves from all references, so each sync uses the whole
-    // history rather than snapping the model onto the latest star alone. Returns how far the old model was
-    // pointing from the star (degrees), for reporting.
+    // Folds a freshly centred target into the fit and re-solves from all references, so each sync uses the whole
+    // history rather than snapping the model onto the latest target alone. Returns how far the old model was
+    // pointing from the target (degrees), for reporting.
     sync(pair) {
       const moved = angleBetweenDeg(mulMV(model.R, sVec(pair)), tVec(pair));
       addReference(model.references, pair);
@@ -180,23 +187,26 @@ function createModel({ R, references, location, declination, target }) {
 }
 
 export async function runTwoStar(ctx, star1, star2, declination) {
-  const sep = angularSeparationDeg(star1.raHours, star1.decDeg, star2.raHours, star2.decDeg);
+  const now = new Date();
+  const c1 = targetRaDec(star1, now);
+  const c2 = targetRaDec(star2, now);
+  const sep = angularSeparationDeg(c1.raHours, c1.decDeg, c2.raHours, c2.decDeg);
   if (sep < MIN_STAR_SEPARATION_DEG) {
-    throw new Error(`${star1.name} and ${star2.name} are only ${formatDeg(sep)} apart; choose stars at least ${MIN_STAR_SEPARATION_DEG}\u00b0 apart for a good alignment.`);
+    throw new Error(`${star1.name} and ${star2.name} are only ${formatDeg(sep)} apart; choose targets at least ${MIN_STAR_SEPARATION_DEG}\u00b0 apart for a good alignment.`);
   }
 
   // Home assumption: scope az 0 is magnetic north, so true az = scope az + declination.
   let R = rotationZ(declination);
 
   await gotoStar(ctx, star1, R);
-  ctx.log('Adjust with the handset until the star is centred, then press Enter.');
+  ctx.log('Adjust with the handset until centred, then press Enter.');
   await waitCentred(ctx, star1, R);
   const p1 = await capture(ctx, star1, 'align');
   R = mulMM(correctionRotation(mulMV(R, sVec(p1)), tVec(p1)), R);
   ctx.log(`${star1.name} recorded.`);
 
   await gotoStar(ctx, star2, R);
-  ctx.log('Adjust with the handset until the star is centred, then press Enter.');
+  ctx.log('Adjust with the handset until centred, then press Enter.');
   await waitCentred(ctx, star2, R);
   const p2 = await capture(ctx, star2, 'align');
   ctx.log(`${star2.name} recorded.`);
@@ -206,9 +216,9 @@ export async function runTwoStar(ctx, star1, star2, declination) {
   const measuredSep = angleBetweenDeg(sVec(p1), sVec(p2));
   const trueSep = angleBetweenDeg(tVec(p1), tVec(p2));
   const res = fitResiduals(references, R);
-  ctx.log(`Star separation: scope ${formatDeg(measuredSep)}, true ${formatDeg(trueSep)}; fit residual RMS altitude ${formatDeg(res.alt)}, azimuth ${formatDeg(res.az)}.`);
+  ctx.log(`Target separation: scope ${formatDeg(measuredSep)}, true ${formatDeg(trueSep)}; fit residual RMS altitude ${formatDeg(res.alt)}, azimuth ${formatDeg(res.az)}.`);
   if (Math.abs(measuredSep - trueSep) > MAX_RESIDUAL_WARN_DEG) {
-    ctx.log('WARNING: the separation the scope measured does not match the sky. A wrong star may have been centred, or the scope azimuth may count the other way. Check before trusting the alignment.');
+    ctx.log('WARNING: the separation the scope measured does not match the sky. A wrong target may have been centred, or the scope azimuth may count the other way. Check before trusting the alignment.');
   }
 
   const model = createModel({ R, references, location: ctx.location, declination, target: star2.name });
@@ -217,7 +227,7 @@ export async function runTwoStar(ctx, star1, star2, declination) {
   return model;
 }
 
-// Keeps the star centred until q / Ctrl+C. Enter pauses for a manual adjustment and then syncs the model.
+// Keeps the target centred until q / Ctrl+C. Enter pauses for a manual adjustment and then syncs the model.
 export async function runTrack(ctx, star, model) {
   const state = { adjust: false, paused: false };
   const off = ctx.keys.onKey((name) => {
@@ -235,7 +245,7 @@ export async function runTrack(ctx, star, model) {
         state.paused = true;
         state.adjust = false;
         await ctx.scope.stopAll();
-        ctx.log('\nTracking paused. Centre the star with the handset, then press Enter to sync (Esc = resume without syncing, q = quit).');
+        ctx.log('\nTracking paused. Centre target with the handset, then press Enter to sync (Esc = resume without syncing, q = quit).');
         const name = await ctx.keys.wait(['return', 'escape', 'q']);
         state.paused = false;
         if (name === 'interrupt' || name === 'q') {
@@ -244,7 +254,7 @@ export async function runTrack(ctx, star, model) {
           const pair = await capture(ctx, star, 'sync');
           const moved = model.sync(pair);
           const n = model.references.length;
-          ctx.log(`Synced from ${n} reference star${n === 1 ? '' : 's'}; the model moved by ${formatDeg(moved)}. Resuming tracking.`);
+          ctx.log(`Synced from ${n} reference target${n === 1 ? '' : 's'}; the model moved by ${formatDeg(moved)}. Resuming tracking.`);
         }
         continue;
       }
@@ -261,13 +271,13 @@ export async function runTrack(ctx, star, model) {
         const cur = await ctx.scope.readAltAz();
         const eAlt = s.alt - cur.alt;
         const eAz = norm180(s.az - cur.az);
-        const radec = precessFromJ2000(star.raHours, star.decDeg, new Date());
+        const radec = targetRaDec(star, new Date());
         ctx.status(
           `${star.name} target: Alt ${formatAlt(t.alt)} Az ${formatAz(t.az)} | RA ${formatHours(radec.raHours)} Dec ${formatAlt(radec.decDeg)} (of date)\n` +
             `scope Alt ${formatAlt(cur.alt, 0)} Az ${formatAz(cur.az, 0)} | off by alt ${signed(eAlt)} az ${signed(eAz)} | Enter = adjust+sync, q = quit`,
         );
         if (Math.abs(eAlt) > TRACK_TRIGGER_DEG || Math.abs(eAz) > TRACK_TRIGGER_DEG) {
-          // Aim each axis one trigger-width ahead of the star, timed from that axis's own drift rate, so the error
+          // Aim each axis one trigger-width ahead of the target, timed from that axis's own drift rate, so the error
           // sweeps symmetrically either side of centre instead of sawtoothing from 0 to the trigger.
           const dtSec = TRACK_DRIFT_SAMPLE_MS / 1000;
           const sFut = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + TRACK_DRIFT_SAMPLE_MS), ctx.location), curAz);
@@ -332,10 +342,10 @@ async function withSession(values, location, fn) {
 }
 
 export async function twoStarCommand(values, name1, name2) {
-  if (!name1 || !name2) throw new Error('align2 needs two star names, e.g. align2 vega arcturus (quote names containing spaces)');
+  if (!name1 || !name2) throw new Error('align2 needs two star/planet names, e.g. align2 vega arcturus or align2 jupiter vega (quote names containing spaces)');
   const star1 = findStar(name1);
   const star2 = findStar(name2);
-  if (star1.name === star2.name) throw new Error('Choose two different stars.');
+  if (star1.name === star2.name) throw new Error('Choose two different targets.');
 
   const location = await resolveLocation(values);
   const now = new Date();
@@ -349,7 +359,7 @@ export async function twoStarCommand(values, name1, name2) {
     const problem = reachProblem(star, t, scopeTarget(R0, t, 0));
     if (problem) throw new Error(problem);
     if (t.alt < MIN_ALIGN_ALT_DEG) {
-      throw new Error(`${star.name} is only ${formatDeg(t.alt)} above the horizon; choose alignment stars above ${MIN_ALIGN_ALT_DEG}\u00b0 so refraction and seeing do not spoil the fit.`);
+      throw new Error(`${star.name} is only ${formatDeg(t.alt)} above the horizon; choose alignment targets above ${MIN_ALIGN_ALT_DEG}\u00b0 so refraction and seeing do not spoil the fit.`);
     }
   }
 
@@ -367,7 +377,7 @@ export async function twoStarCommand(values, name1, name2) {
 export async function trackCommand(values, name) {
   const rec = loadAlignment();
   const starName = name ?? rec.target?.name;
-  if (!starName) throw new Error('track needs a star name, e.g. track vega');
+  if (!starName) throw new Error('track needs a star or planet name, e.g. track vega or track jupiter');
   const star = findStar(starName);
   const location = values.lat !== undefined || values.lon !== undefined ? await resolveLocation(values) : rec.location;
   console.log(`Using the alignment saved ${rec.savedAt}. It is only valid if the handset has not been power-cycled and the scope has not slipped since.`);

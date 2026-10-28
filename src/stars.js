@@ -1,5 +1,6 @@
 import { formatAlt, formatAz } from './angles.js';
 import { precessFromJ2000, raDecToAltAz } from './astro.js';
+import { findPlanet, listPlanets, planetRaDec, PLANET_NAMES } from './planets.js';
 
 // The 200 brightest stars (by V magnitude) that have an IAU-approved proper name.
 // Source: IAU Catalog of Star Names (WGSN), https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt
@@ -223,34 +224,60 @@ function editDistance(a, b) {
   return prev[b.length];
 }
 
-// Exact (case/space-insensitive) match first, then a unique prefix match.
-export function findStar(query) {
+// Exact (case/space-insensitive) match first, then a unique prefix match across stars and planets.
+export function findStar(query, now = new Date()) {
   const q = key(query);
-  const exact = STAR_LIST.find((s) => key(s.name) === q);
-  if (exact) return exact;
-  const matches = STAR_LIST.filter((s) => key(s.name).startsWith(q));
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) throw new Error(`"${query}" is ambiguous: ${matches.map((s) => s.name).join(', ')}`);
-  const close = STAR_LIST.map((s) => ({ s, d: editDistance(q, key(s.name)) }))
+  const planetMatch = findPlanet(q, now);
+  if (planetMatch && key(planetMatch.name) === q) return planetMatch;
+
+  const exactStar = STAR_LIST.find((s) => key(s.name) === q);
+  if (exactStar) return exactStar;
+
+  const planetPrefix = PLANET_NAMES.filter((p) => key(p).startsWith(q));
+  const starPrefix = STAR_LIST.filter((s) => key(s.name).startsWith(q));
+  const totalMatches = [...planetPrefix.map((p) => ({ name: p, kind: 'planet' })), ...starPrefix];
+
+  if (totalMatches.length === 1) {
+    if (totalMatches[0].kind === 'planet') return findPlanet(totalMatches[0].name, now);
+    return totalMatches[0];
+  }
+  if (totalMatches.length > 1) {
+    throw new Error(`"${query}" is ambiguous: ${totalMatches.map((s) => s.name).join(', ')}`);
+  }
+
+  const allNames = [...PLANET_NAMES, ...STAR_LIST.map((s) => s.name)];
+  const close = allNames
+    .map((name) => ({ name, d: editDistance(q, key(name)) }))
     .filter((x) => x.d <= Math.max(1, Math.floor(q.length / 4)))
     .sort((a, b) => a.d - b.d)
     .slice(0, 3)
-    .map((x) => x.s.name);
-  throw new Error(`Unknown star "${query}".${close.length ? ` Did you mean ${close.join(', ')}?` : ''} Run "stars" to list the available names.`);
+    .map((x) => x.name);
+  throw new Error(`Unknown target "${query}".${close.length ? ` Did you mean ${close.join(', ')}?` : ''} Run "stars" or "planets" to list the available names.`);
 }
 
-// Prints the catalogue with each star's current altitude/azimuth. Stars outside the allowed
-// altitude window are hidden unless showAll is set.
+export const findTarget = findStar;
+
+// Prints planets and the 200 brightest stars with their current altitude/azimuth.
+// Targets outside the allowed altitude window are hidden unless showAll is set.
 export function listStars({ location, minAlt, maxAlt, showAll, now = new Date() }) {
-  console.log(`${'Name'.padEnd(18)} ${'Mag'.padStart(5)}  ${'Alt'.padStart(10)}  ${'Az'.padStart(10)}`);
-  let shown = 0;
+  console.log(`${'Target'.padEnd(18)} ${'Mag'.padStart(5)}  ${'Alt'.padStart(10)}  ${'Az'.padStart(10)}`);
+  let shownPlanets = 0;
+  for (const name of PLANET_NAMES) {
+    const coords = planetRaDec(name, now);
+    const { alt, az } = raDecToAltAz(coords.raHours, coords.decDeg, now, location.latitude, location.longitude);
+    const ok = alt >= minAlt && alt < maxAlt;
+    if (!ok && !showAll) continue;
+    shownPlanets += 1;
+    console.log(`${name.padEnd(18)} ${coords.mag.toFixed(2).padStart(5)}  ${formatAlt(alt, 0).padStart(10)}  ${formatAz(az, 0).padStart(10)}${ok ? '  (planet)' : '  (planet, not usable)'}`);
+  }
+  let shownStars = 0;
   for (const star of STAR_LIST) {
     const of = precessFromJ2000(star.raHours, star.decDeg, now);
     const { alt, az } = raDecToAltAz(of.raHours, of.decDeg, now, location.latitude, location.longitude);
     const ok = alt >= minAlt && alt < maxAlt;
     if (!ok && !showAll) continue;
-    shown += 1;
+    shownStars += 1;
     console.log(`${star.name.padEnd(18)} ${star.mag.toFixed(2).padStart(5)}  ${formatAlt(alt, 0).padStart(10)}  ${formatAz(az, 0).padStart(10)}${ok ? '' : '  (not usable)'}`);
   }
-  console.log(`\n${shown} of ${STAR_LIST.length} stars shown (usable: altitude ${minAlt}\u00b0 to ${maxAlt}\u00b0).`);
+  console.log(`\n${shownPlanets + shownStars} targets shown (${shownPlanets} planets, ${shownStars} stars; usable: altitude ${minAlt}\u00b0 to ${maxAlt}\u00b0).`);
 }

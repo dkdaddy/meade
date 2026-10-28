@@ -22,21 +22,22 @@ Run with `npm start -- <command>`. Write negative values with `=`, e.g. `--to=-9
 | Command | What it does |
 |---|---|
 | `monitor [--interval 500]` | Reads RA, Dec, Alt, Az, time, date, latitude, longitude in a loop. Default command. |
-| `stars [--all]` | Lists the 200 brightest named stars currently usable (altitude 5-75 deg). |
-| `align <star>` or `align --ra --dec` | Read-only single-star alignment: you move the scope, press Enter, the offset is saved. Superseded by `align2`. |
+| `planets [--all]` | Lists the 7 major planets with magnitude and current altitude/azimuth. |
+| `stars [--all]` | Lists visible planets and the 200 brightest named stars currently usable (altitude 5-75 deg). |
+| `align <target>` or `align --ra --dec` | Read-only single-target alignment (star or planet): you move the scope, press Enter, the offset is saved. Superseded by `align2`. |
 | `slew-alt <deg>` | Closed-loop slew of altitude to `<deg>` (0 up to, not including, 75), in the scope's own reported frame. |
-| `slew-az <deg>` | Closed-loop slew of azimuth. 0-360 or `--to=-90`; measured from home, never crosses 180, target within 175 of home. |
-| `align2 <star1> <star2>` | Two-star alignment, then tracks star 2. Quote names with spaces. Stars must be 20+ deg apart. |
-| `track [star]` | Loads `alignment.json`, slews to the star (default: the last one used) and tracks it. |
+| `slew-az <deg>` | Closed-loop slew of azimuth within 300 deg of home (e.g. 0-300 or `--to=-90`). |
+| `align2 <target1> <target2>` | Two-target alignment (stars or planets, e.g. `align2 jupiter vega`), then tracks target 2. Targets must be 20+ deg apart. |
+| `track [target]` | Loads `alignment.json`, slews to the target (star or planet; default: the last one used) and tracks it. |
 
 Common options: `--port COM3`, `--lat D --lon D`, `--declination D` (override the PC location / magnetic declination).
 
-### Two-star alignment and tracking
+### Two-star/planet alignment and tracking
 
 1. Put the scope at home (level, pointing magnetic north) and power-cycle the handset so it reads Alt 0 / Az 0.
-2. `npm start -- align2 vega arcturus`. It slews to the first star; centre it with the handset and press Enter. Repeat for the second.
-3. The PC fits a rotation between the scope's reported Alt/Az and the true Alt/Az, saves it to `alignment.json`, and starts tracking star 2.
-4. While tracking: Enter pauses so you can centre the star by hand, Enter again syncs and resumes, Esc resumes without syncing, q or Ctrl+C stops.
+2. `npm start -- align2 jupiter vega`. It slews to the first target; centre it with the handset and press Enter. Repeat for the second.
+3. The PC fits a rotation between the scope's reported Alt/Az and the true Alt/Az, saves it to `alignment.json`, and starts tracking target 2.
+4. While tracking: Enter pauses so you can centre the target by hand, Enter again syncs and resumes, Esc resumes without syncing, q or Ctrl+C stops.
 
 Tracking is the PC nudging the scope with move/stop commands, so it moves in small steps, not smoothly (see Limitations).
 The saved alignment is only valid until the handset is power-cycled or the scope slips.
@@ -47,7 +48,7 @@ The saved alignment is only valid until the handset is power-cycled or the scope
   read commands (`:G...#`, through `Scope.query()`) and motion commands (move, stop, move-rate, through `Scope.command()`).
   Both channels are whitelisted by regex in `src/lx200.js`.
 - Limits: altitude -1 to 75 deg (hard stop), azimuth within 300 deg of home (hard stop). Slews refuse to start if the scope is
-  already outside them. Alignment stars must be at least 5 deg above the horizon.
+  already outside them. Alignment targets must be at least 5 deg above the horizon (15 deg for `align2`).
 - Ctrl+C stops all motion. Every slew and track ends with a stop on all axes.
 - The handset's speed setting is changed by the rate commands (`:RS#`, `:RM#`, `:RC#`).
 
@@ -58,13 +59,14 @@ The saved alignment is only valid until the handset is power-cycled or the scope
 | `src/index.js` | CLI entry, argument parsing, usage text |
 | `src/lx200.js` | Serial link, whitelisted `query()` / `command()`, `readAlt` / `readAz` / `readAltAz`, azimuth decoding |
 | `src/slew.js` | `slewAxis()`: closed-loop single-axis slew; `slewCommand()` for the CLI |
-| `src/twostar.js` | `align2` and `track`: two-star alignment, tracking loop, sync, `alignment.json` read/write |
+| `src/twostar.js` | `align2` and `track`: two-target alignment, tracking loop, sync, `alignment.json` read/write |
 | `src/pointing.js` | Vector / rotation maths for the pointing model |
 | `src/keys.js` | Single-key terminal input (Ctrl+C arrives as `interrupt`) |
-| `src/align.js` | Old read-only single-star alignment; also exports the limit constants |
+| `src/align.js` | Old read-only single-target alignment; also exports the limit constants |
 | `src/astro.js` | Sidereal time, RA/Dec to Alt/Az, precession from J2000 |
+| `src/planets.js` | Analytical planetary ephemerides (Keplerian orbits, perturbations, RA/Dec of date, magnitude) |
 | `src/location.js` | PC position (Windows location service) and magnetic declination (WMM via `geomagnetism`) |
-| `src/stars.js`, `src/angles.js`, `src/monitor.js` | Star list, angle parsing/formatting, monitor loop |
+| `src/stars.js`, `src/angles.js`, `src/monitor.js` | Target resolution (stars & planets), angle parsing/formatting, monitor loop |
 
 ## Hardware findings
 
@@ -83,7 +85,7 @@ The saved alignment is only valid until the handset is power-cycled or the scope
 - Tracking is not smooth: the slowest speed that moves the axis (about 0.18 deg/s) is about 45 times faster than a star, and the
   handset lags 0.4 s, so corrections are small jumps once the star drifts about 0.04 deg. Options: a smaller trigger, or better
   pulse timing. The scope's own tracking would need controller writes, which are ruled out.
-- The azimuth is assumed to increase clockwise. `align2` warns if the measured star separation disagrees with the sky.
+- The azimuth is assumed to increase clockwise. `align2` warns if the measured target separation disagrees with the sky.
 - The old `align` writes `alignment.json` in an older format that `track` rejects. Re-run `align2`.
 - There are no automated tests. Simulated-scope checks live in `%TEMP%` (`slewsim.mjs`, `twostarsim.mjs`) and are not in the repo;
   the two-star simulation writes `alignment.json`, so delete it afterwards.
