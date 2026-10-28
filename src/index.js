@@ -12,6 +12,7 @@ const USAGE = `Usage:
   node src/index.js monitor [--port COM3] [--interval 500]
   node src/index.js home [--port COM3]
   node src/index.js go-home [--port COM3]           (slews the scope to Alt 0 / Az 0)
+  node src/index.js park [--port COM3]              (alias for go-home)
   node src/index.js slew-alt <deg>      (0 up to ${MAX_ALT_DEG}; negative: --to=-5)
   node src/index.js slew-az <deg>       (within 300 of home, e.g. 0-300 or --to=-90)
   node src/index.js planets [--all] [--lat D --lon D]
@@ -22,23 +23,23 @@ const USAGE = `Usage:
   node src/index.js track [target] [--port COM3]
 
 Notes:
-  Targets can be catalog stars or major planets (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune).
+  Targets can be catalog stars, major planets (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune), or the Moon.
   align2 does a two-target alignment, then tracks the second target. It slews to target 1, you centre it with the handset
   and press Enter, then the same for target 2. The alignment is saved to alignment.json. Quote names with spaces:
-  align2 jupiter vega. Pick targets at least 20 deg apart. The scope must read Alt 0 / Az 0 at the start.
+  align2 moon vega or align2 jupiter vega. Pick targets at least 20 deg apart. The scope must read Alt 0 / Az 0 at the start.
   track [target] loads the saved alignment, slews to the target (default: the last one) and tracks it. While tracking,
   Enter pauses so you can centre the target by hand and press Enter again to sync; Esc resumes without syncing; q quits.
   Tracking is done by the PC nudging the scope with move/stop commands; nothing is written to the controller.
-  planets lists the 7 major planets with their magnitude and current altitude/azimuth.
-  stars lists visible planets and the 200 brightest named stars currently usable (altitude ${MIN_ALT_DEG}-${MAX_ALT_DEG} deg).
-  Target names are case-insensitive, spaces optional, unique prefixes work (align jupiter, align vega, align "rigil kent").
+  planets lists the Moon and 7 major planets with their magnitude, phase, and current altitude/azimuth.
+  stars lists visible solar system bodies (Moon, planets) and the 200 brightest named stars currently usable (altitude ${MIN_ALT_DEG}-${MAX_ALT_DEG} deg).
+  Target names are case-insensitive, spaces optional, unique prefixes work (align moon, align jupiter, align vega, align "rigil kent").
   Write negative values with '=', e.g. --dec=-16:42:58 --lon=-0.13
   This tool only reads from the controller, except slew-alt / slew-az, which send move, stop and move-rate
   commands and nothing else (no settings, time, site, target or sync). You move the scope yourself for align.
   slew-alt / slew-az work in the scope's own reported frame (Alt 0 / Az 0 = home), step down through the
   Slew/Move/Center/Guide rates, and stop if a limit is hit (altitude -1..${MAX_ALT_DEG}, azimuth within 300 of home).
   align expects the scope to report Alt 0 / Az 0 at home (level, pointing magnetic north).
-  --ra/--dec are taken as of-date; star names are J2000 and are precessed automatically; planets are computed of-date.`;
+  --ra/--dec are taken as of-date; star names are J2000 and are precessed automatically; planets and Moon are computed of-date with topocentric parallax.`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -65,7 +66,7 @@ try {
     await monitor(values.port, Number(values.interval));
   } else if (command === 'home') {
     await homeCommand(values);
-  } else if (command === 'go-home') {
+  } else if (command === 'go-home' || command === 'park') {
     await goHomeCommand(values.port);
   } else if (command === 'align') {
     await align(values, positionals.slice(1).join(' ') || undefined);

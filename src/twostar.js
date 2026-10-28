@@ -40,16 +40,16 @@ async function sleepUntil(ms, stop) {
   while (Date.now() < end && !stop()) await sleep(Math.min(100, end - Date.now()));
 }
 
-export function targetRaDec(target, when = new Date()) {
-  if (target.kind === 'planet' || typeof target.raDec === 'function') {
-    return target.raDec(when);
+export function targetRaDec(target, when = new Date(), location = null) {
+  if (target.kind === 'planet' || target.kind === 'moon' || typeof target.raDec === 'function') {
+    return target.raDec(when, location);
   }
   return precessFromJ2000(target.raHours, target.decDeg, when);
 }
 
 export function starTrueAltAz(star, when, location) {
-  const p = targetRaDec(star, when);
-  return raDecToAltAz(p.raHours, p.decDeg, when, location.latitude, location.longitude);
+  const p = targetRaDec(star, when, location);
+  return raDecToAltAz(p.raHours, p.decDeg, when, location?.latitude, location?.longitude);
 }
 
 // Where the scope must read (its own frame) to point at the true Alt/Az `t`, given scope->true rotation R.
@@ -188,8 +188,8 @@ function createModel({ R, references, location, declination, target }) {
 
 export async function runTwoStar(ctx, star1, star2, declination) {
   const now = new Date();
-  const c1 = targetRaDec(star1, now);
-  const c2 = targetRaDec(star2, now);
+  const c1 = targetRaDec(star1, now, ctx.location);
+  const c2 = targetRaDec(star2, now, ctx.location);
   const sep = angularSeparationDeg(c1.raHours, c1.decDeg, c2.raHours, c2.decDeg);
   if (sep < MIN_STAR_SEPARATION_DEG) {
     throw new Error(`${star1.name} and ${star2.name} are only ${formatDeg(sep)} apart; choose targets at least ${MIN_STAR_SEPARATION_DEG}\u00b0 apart for a good alignment.`);
@@ -271,7 +271,7 @@ export async function runTrack(ctx, star, model) {
         const cur = await ctx.scope.readAltAz();
         const eAlt = s.alt - cur.alt;
         const eAz = norm180(s.az - cur.az);
-        const radec = targetRaDec(star, new Date());
+        const radec = targetRaDec(star, new Date(), ctx.location);
         ctx.status(
           `${star.name} target: Alt ${formatAlt(t.alt)} Az ${formatAz(t.az)} | RA ${formatHours(radec.raHours)} Dec ${formatAlt(radec.decDeg)} (of date)\n` +
             `scope Alt ${formatAlt(cur.alt, 0)} Az ${formatAz(cur.az, 0)} | off by alt ${signed(eAlt)} az ${signed(eAz)} | Enter = adjust+sync, q = quit`,
@@ -342,13 +342,13 @@ async function withSession(values, location, fn) {
 }
 
 export async function twoStarCommand(values, name1, name2) {
-  if (!name1 || !name2) throw new Error('align2 needs two star/planet names, e.g. align2 vega arcturus or align2 jupiter vega (quote names containing spaces)');
-  const star1 = findStar(name1);
-  const star2 = findStar(name2);
-  if (star1.name === star2.name) throw new Error('Choose two different targets.');
-
+  if (!name1 || !name2) throw new Error('align2 needs two target names, e.g. align2 moon vega or align2 jupiter vega (quote names containing spaces)');
   const location = await resolveLocation(values);
   const now = new Date();
+  const star1 = findStar(name1, now, location);
+  const star2 = findStar(name2, now, location);
+  if (star1.name === star2.name) throw new Error('Choose two different targets.');
+
   const declination = values.declination !== undefined ? parseDegrees(values.declination) : magneticDeclination(location.latitude, location.longitude, now);
   console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source})`);
   console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0: level, pointing magnetic north)`);
@@ -377,9 +377,9 @@ export async function twoStarCommand(values, name1, name2) {
 export async function trackCommand(values, name) {
   const rec = loadAlignment();
   const starName = name ?? rec.target?.name;
-  if (!starName) throw new Error('track needs a star or planet name, e.g. track vega or track jupiter');
-  const star = findStar(starName);
+  if (!starName) throw new Error('track needs a target name, e.g. track moon, track vega or track jupiter');
   const location = values.lat !== undefined || values.lon !== undefined ? await resolveLocation(values) : rec.location;
+  const star = findStar(starName, new Date(), location);
   console.log(`Using the alignment saved ${rec.savedAt}. It is only valid if the handset has not been power-cycled and the scope has not slipped since.`);
 
   await withSession(values, location, async (ctx) => {

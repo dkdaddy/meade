@@ -24,11 +24,11 @@ See README.md for commands and hardware findings. Run with `npm start -- <comman
   Learns which key raises the reading (cached in `session.keys`), coarse phases at Slew then Move rate, then a Center-rate final approach
   that releases the key a measured coast `lead` before the target (cached in `session.lead`). `:RG#` (Guide) does not move the axes; do not use it.
   Azimuth is handled as unwrapped degrees from home in [-300, 300]. `bestAzFromHome(reading, cur)` unwraps to the closest branch within [-300, 300]. `CancelledError` is thrown when `isCancelled()` is true.
-- `planets.js`: analytical planetary ephemerides (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune). Computes of-date geocentric apparent RA/Dec and visual magnitude.
-- `stars.js`: IAU catalog stars (J2000 precessed to date) and unified target search (`findStar` / `findTarget`) matching both stars and planets.
+- `planets.js`: analytical ephemerides for the Moon and planets (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune). Computes of-date apparent RA/Dec with topocentric parallax, visual magnitude, and lunar phase.
+- `stars.js`: IAU catalog stars (J2000 precessed to date) and unified target search (`findStar` / `findTarget`) matching stars, planets, and the Moon.
 - `twostar.js`: pointing model is a 3x3 rotation `R` (scope frame to true frame; x north, y east, z up). Target 1: minimal-rotation correction from
   the declination guess. Target 2: symmetric two-vector fit (`twoStarRotation`). Sync in tracking: minimal correction rotation, saved to
-  `alignment.json` (version 3). Supports both stars and planets (`targetRaDec`). `runTwoStar` and `runTrack` take a `ctx` (`scope, keys, ctl, location, session, log, status`) so they can be
+  `alignment.json` (version 3). Supports stars, planets, and the Moon (`targetRaDec`). `runTwoStar` and `runTrack` take a `ctx` (`scope, keys, ctl, location, session, log, status`) so they can be
   driven by a fake scope and fake keys.
 - Tracking is the PC nudging the scope (trigger 0.04 deg, aims ahead based on drift rate). It cannot be smooth with the speeds available.
 

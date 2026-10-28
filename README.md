@@ -22,13 +22,15 @@ Run with `npm start -- <command>`. Write negative values with `=`, e.g. `--to=-9
 | Command | What it does |
 |---|---|
 | `monitor [--interval 500]` | Reads RA, Dec, Alt, Az, time, date, latitude, longitude in a loop. Default command. |
-| `planets [--all]` | Lists the 7 major planets with magnitude and current altitude/azimuth. |
-| `stars [--all]` | Lists visible planets and the 200 brightest named stars currently usable (altitude 5-75 deg). |
-| `align <target>` or `align --ra --dec` | Read-only single-target alignment (star or planet): you move the scope, press Enter, the offset is saved. Superseded by `align2`. |
+| `home` | Read-only check that the scope is currently at home (Alt 0 / Az 0). |
+| `go-home` or `park` | Slews the scope back to home (Alt 0 / Az 0: Azimuth first, then Altitude). |
+| `planets [--all]` | Lists the Moon and 7 major planets with magnitude, illumination, and current altitude/azimuth. |
+| `stars [--all]` | Lists visible solar system bodies (Moon, planets) and the 200 brightest named stars currently usable (altitude 5-75 deg). |
+| `align <target>` or `align --ra --dec` | Read-only single-target alignment (star, planet, or Moon): you move the scope, press Enter, the offset is saved. Superseded by `align2`. |
 | `slew-alt <deg>` | Closed-loop slew of altitude to `<deg>` (0 up to, not including, 75), in the scope's own reported frame. |
 | `slew-az <deg>` | Closed-loop slew of azimuth within 300 deg of home (e.g. 0-300 or `--to=-90`). |
-| `align2 <target1> <target2>` | Two-target alignment (stars or planets, e.g. `align2 jupiter vega`), then tracks target 2. Targets must be 20+ deg apart. |
-| `track [target]` | Loads `alignment.json`, slews to the target (star or planet; default: the last one used) and tracks it. |
+| `align2 <target1> <target2>` | Two-target alignment (stars, planets, or Moon, e.g. `align2 moon vega`), then tracks target 2. Targets must be 20+ deg apart. |
+| `track [target]` | Loads `alignment.json`, slews to the target (star, planet, or Moon; default: the last one used) and tracks it. |
 
 Common options: `--port COM3`, `--lat D --lon D`, `--declination D` (override the PC location / magnetic declination).
 
@@ -64,9 +66,9 @@ The saved alignment is only valid until the handset is power-cycled or the scope
 | `src/keys.js` | Single-key terminal input (Ctrl+C arrives as `interrupt`) |
 | `src/align.js` | Old read-only single-target alignment; also exports the limit constants |
 | `src/astro.js` | Sidereal time, RA/Dec to Alt/Az, precession from J2000 |
-| `src/planets.js` | Analytical planetary ephemerides (Keplerian orbits, perturbations, RA/Dec of date, magnitude) |
+| `src/planets.js` | Analytical ephemerides for the Moon & planets (Keplerian orbits, perturbations, topocentric parallax, RA/Dec of date, magnitude) |
 | `src/location.js` | PC position (Windows location service) and magnetic declination (WMM via `geomagnetism`) |
-| `src/stars.js`, `src/angles.js`, `src/monitor.js` | Target resolution (stars & planets), angle parsing/formatting, monitor loop |
+| `src/stars.js`, `src/angles.js`, `src/monitor.js` | Target resolution (stars, planets, Moon), angle parsing/formatting, monitor loop |
 
 ## Hardware findings
 

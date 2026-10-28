@@ -63,9 +63,9 @@ export async function align(values, starName) {
   let target;
   let star = null;
   if (starName) {
-    star = findStar(starName);
-    target = (star.kind === 'planet' || typeof star.raDec === 'function')
-      ? star.raDec(now)
+    star = findStar(starName, now, location);
+    target = (star.kind === 'planet' || star.kind === 'moon' || typeof star.raDec === 'function')
+      ? star.raDec(now, location)
       : precessFromJ2000(star.raHours, star.decDeg, now);
   } else {
     target = { raHours: parseHours(values.ra), decDeg: parseDegrees(values.dec) };
@@ -77,8 +77,8 @@ export async function align(values, starName) {
 
   // Where the scope should read when it is pointing at the target (scope az 0 = magnetic north).
   const targetReading = (when) => {
-    const coords = (star && (star.kind === 'planet' || typeof star.raDec === 'function'))
-      ? star.raDec(when)
+    const coords = (star && (star.kind === 'planet' || star.kind === 'moon' || typeof star.raDec === 'function'))
+      ? star.raDec(when, location)
       : target;
     const t = raDecToAltAz(coords.raHours, coords.decDeg, when, location.latitude, location.longitude);
     return { trueAlt: t.alt, trueAz: t.az, alt: t.alt, az: norm360(t.az - homeTrueAz), coords };
