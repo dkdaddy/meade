@@ -1,13 +1,13 @@
 import fs from 'node:fs';
-import { angularSeparationDeg, norm180, precessFromJ2000, raDecToAltAz } from './astro.js';
-import { formatAlt, formatAz, formatDeg, formatHours, parseDegrees } from './angles.js';
+import { angularSeparationDeg, norm180, norm360, precessFromJ2000, raDecToAltAz } from './astro.js';
+import { formatAlt, formatAz, formatDeg, formatHours, parseDegrees, parseHours } from './angles.js';
 import { ALIGNMENT_FILE, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { magneticDeclination, resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
 import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis } from './slew.js';
 import { openKeys } from './keys.js';
-import { altAzToVec, angleBetweenDeg, bestRotation, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoStarRotation, vecToAltAz } from './pointing.js';
+import { altAzToVec, angleBetweenDeg, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoPointRotation, vecToAltAz } from './pointing.js';
 
 // Two-star/planet alignment and PC-driven tracking.
 // The scope only ever receives motion commands (move / stop / move-rate) and read commands: no settings, time,
@@ -27,7 +27,6 @@ const TRACK_MIN_LEAD_MS = 1500;
 const TRACK_MAX_LEAD_MS = 20000;
 const TRACK_DRIFT_SAMPLE_MS = 4000; // baseline over which the drift rate is measured
 const TRACK_CYCLE_MS = 1000;
-const MAX_REFERENCES = 20;
 const MIN_ALIGN_ALT_DEG = 15; // alignment targets should be well up: refraction and seeing blur low targets
 const RAD = Math.PI / 180;
 const clampRange = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -68,11 +67,18 @@ export function reachProblem(star, t, s) {
 const sVec = (p) => altAzToVec(p.scope.alt, p.scope.az);
 const tVec = (p) => altAzToVec(p.true.alt, p.true.az);
 
-async function capture(ctx, star, kind) {
+// A freshly centred target as a model point. `source` records how the point was set ('align' or 'sync').
+async function capture(ctx, star, source) {
   const at = new Date();
   const r = await ctx.scope.readAltAz();
   const t = starTrueAltAz(star, at, ctx.location);
-  return { star: star.name, kind, at: at.toISOString(), scope: { alt: r.alt, az: r.az }, true: { alt: t.alt, az: t.az } };
+  return { role: 'star', name: star.name, kind: star.kind ?? 'star', source, at: at.toISOString(), scope: { alt: r.alt, az: r.az }, true: { alt: t.alt, az: t.az } };
+}
+
+// The home pose as a model point: the scope reads Alt 0 / Az 0 and is assumed level and pointing magnetic north,
+// so its true direction is Alt 0 at an azimuth equal to the magnetic declination.
+export function homePoint(declination) {
+  return { role: 'home', name: 'Home', kind: 'home', source: 'home', at: new Date().toISOString(), scope: { alt: 0, az: 0 }, true: { alt: 0, az: norm360(declination) } };
 }
 
 async function gotoStar(ctx, star, R) {
@@ -113,49 +119,77 @@ async function waitCentred(ctx, star, R) {
   ctx.status('');
 }
 
-function saveAlignment({ location, declination, R, references, target }) {
+// Human-readable orientation facts derived from the scope->true rotation R, for the saved file: how far the
+// scope's vertical axis is from true vertical (levelness) and where the home pose (scope Alt 0 / Az 0) actually
+// points relative to true level and magnetic north.
+export function describeAlignment(R, declination) {
+  const decl = declination ?? 0;
+  const up = mulMV(R, [0, 0, 1]);
+  const levelnessDeg = angleBetweenDeg([0, 0, 1], up);
+  const levelLeanAzimuthDeg = norm360(Math.atan2(up[1], up[0]) / RAD);
+  const homeTrue = vecToAltAz(mulMV(R, altAzToVec(0, 0)));
+  const homeLevelErrorDeg = homeTrue.alt; // + = scope's home points above true level
+  const homeHeadingErrorDeg = norm180(homeTrue.az - decl); // + = east of magnetic north
+  const side = (v, pos, neg) => `${formatDeg(Math.abs(v))} ${v >= 0 ? pos : neg}`;
+  const lean = levelnessDeg >= 0.05 ? ` (leaning toward Az ${formatAz(levelLeanAzimuthDeg)})` : '';
+  const summary =
+    `Scope base tilts ${formatDeg(levelnessDeg)} from level${lean}; at home (scope Alt 0 / Az 0) it points ` +
+    `true Alt ${formatAlt(homeTrue.alt)} Az ${formatAz(homeTrue.az)} \u2014 ${side(homeLevelErrorDeg, 'above level', 'below level')} and ` +
+    `${side(homeHeadingErrorDeg, 'east of magnetic north', 'west of magnetic north')}.`;
+  return { levelnessDeg, levelLeanAzimuthDeg, homeTrueAltDeg: homeTrue.alt, homeTrueAzDeg: homeTrue.az, homeLevelErrorDeg, homeHeadingErrorDeg, summary };
+}
+
+function saveAlignment({ location, declination, R, points, target }) {
   const record = {
-    version: 3,
+    version: 1,
     savedAt: new Date().toISOString(),
     location: { latitude: location.latitude, longitude: location.longitude, source: location.source },
     magneticDeclinationDeg: declination ?? null,
-    frame: 'x north, y east, z up; true = rotation * scope (scope az 0 / alt 0 = home)',
+    frame: 'x north, y east, z up; true = rotation * scope (scope Alt 0 / Az 0 = home)',
     rotation: R,
-    references,
+    diagnostics: describeAlignment(R, declination),
+    points,
     target: { name: target },
   };
   fs.writeFileSync(ALIGNMENT_FILE, JSON.stringify(record, null, 2) + '\n');
   return record;
 }
 
-function loadAlignment() {
+export function loadAlignment() {
   let rec;
   try {
     rec = JSON.parse(fs.readFileSync(ALIGNMENT_FILE, 'utf8'));
   } catch {
-    throw new Error('No saved alignment. Run align2 <star1> <star2> first.');
+    throw new Error('No saved alignment. Run align <target> or align2 <star1> <star2> first.');
   }
-  if (rec.version !== 3 || !Array.isArray(rec.rotation)) throw new Error('The saved alignment is from the old single-star align. Run align2 <star1> <star2>.');
+  if (rec.version !== 1 || !Array.isArray(rec.rotation) || !Array.isArray(rec.points)) {
+    throw new Error('The saved alignment is in an unsupported format. Re-run align <target> or align2 <star1> <star2>.');
+  }
   return rec;
 }
 
-function addReference(references, pair) {
-  references.push(pair);
-  if (references.length > MAX_REFERENCES) references.splice(2, 1);
-}
+// Scope->true rotation that seeds on `anchor` (satisfied as the starting pose) and makes `other` exact.
+export const fitTwoPoints = (anchor, other) => twoPointRotation(sVec(anchor), tVec(anchor), sVec(other), tVec(other));
 
-const pairVecs = (p) => ({ s: sVec(p), t: tVec(p) });
-
-// Least-squares scope->true rotation over every reference star/planet, refined from the current estimate.
-function fitRotation(references, seed) {
-  return bestRotation(references.map(pairVecs), seed);
+// Index of the stored point nearest to `pair` in the sky (true-position angular separation).
+export function closestPointIndex(points, pair) {
+  let best = 0;
+  let bestSep = Infinity;
+  points.forEach((p, i) => {
+    const sep = angleBetweenDeg(tVec(p), tVec(pair));
+    if (sep < bestSep) {
+      bestSep = sep;
+      best = i;
+    }
+  });
+  return best;
 }
 
 // Per-axis RMS of the fit, in degrees: altitude error, and azimuth error reduced to a great-circle angle.
-function fitResiduals(references, R) {
+function fitResiduals(points, R) {
   const alt = [];
   const az = [];
-  for (const p of references) {
+  for (const p of points) {
     const pred = vecToAltAz(mulMV(R, sVec(p)));
     alt.push(pred.alt - p.true.alt);
     az.push(norm180(pred.az - p.true.az) * Math.cos(p.true.alt * RAD));
@@ -164,21 +198,25 @@ function fitResiduals(references, R) {
   return { alt: rms(alt), az: rms(az) };
 }
 
-function createModel({ R, references, location, declination, target }) {
+// The pointing model: exactly two reference points and the scope->true rotation they define. A sync replaces the
+// point closest to the fresh measurement in the sky; the retained point is the anchor and the new one ends exact,
+// so the model never grows past two points.
+export function createModel({ R, points, location, declination, target }) {
   const model = {
     R,
-    references,
+    points,
     target,
     persist() {
-      saveAlignment({ location, declination, R: model.R, references: model.references, target: model.target });
+      saveAlignment({ location, declination, R: model.R, points: model.points, target: model.target });
     },
-    // Folds a freshly centred target into the fit and re-solves from all references, so each sync uses the whole
-    // history rather than snapping the model onto the latest target alone. Returns how far the old model was
-    // pointing from the target (degrees), for reporting.
     sync(pair) {
       const moved = angleBetweenDeg(mulMV(model.R, sVec(pair)), tVec(pair));
-      addReference(model.references, pair);
-      model.R = fitRotation(model.references, model.R);
+      const idx = closestPointIndex(model.points, pair);
+      const retained = model.points[1 - idx];
+      model.points = [retained, pair];
+      // The freshly centred measurement is trusted, so it is the anchor (kept exact); the retained point fixes
+      // the remaining twist. The model never grows past two points.
+      model.R = fitTwoPoints(pair, retained);
       model.persist();
       return moved;
     },
@@ -202,6 +240,7 @@ export async function runTwoStar(ctx, star1, star2, declination) {
   ctx.log('Adjust with the handset until centred, then press Enter.');
   await waitCentred(ctx, star1, R);
   const p1 = await capture(ctx, star1, 'align');
+  // Correct the home seed so star 1 is satisfied, giving a good rotation to slew to star 2 with.
   R = mulMM(correctionRotation(mulMV(R, sVec(p1)), tVec(p1)), R);
   ctx.log(`${star1.name} recorded.`);
 
@@ -211,18 +250,20 @@ export async function runTwoStar(ctx, star1, star2, declination) {
   const p2 = await capture(ctx, star2, 'align');
   ctx.log(`${star2.name} recorded.`);
 
-  const references = [p1, p2];
-  R = fitRotation(references, twoStarRotation(sVec(p1), sVec(p2), tVec(p1), tVec(p2)));
+  // Two-point model anchored on star 1's reading (home is not stored).
+  const points = [p1, p2];
+  R = fitTwoPoints(p1, p2);
   const measuredSep = angleBetweenDeg(sVec(p1), sVec(p2));
   const trueSep = angleBetweenDeg(tVec(p1), tVec(p2));
-  const res = fitResiduals(references, R);
+  const res = fitResiduals(points, R);
   ctx.log(`Target separation: scope ${formatDeg(measuredSep)}, true ${formatDeg(trueSep)}; fit residual RMS altitude ${formatDeg(res.alt)}, azimuth ${formatDeg(res.az)}.`);
   if (Math.abs(measuredSep - trueSep) > MAX_RESIDUAL_WARN_DEG) {
     ctx.log('WARNING: the separation the scope measured does not match the sky. A wrong target may have been centred, or the scope azimuth may count the other way. Check before trusting the alignment.');
   }
 
-  const model = createModel({ R, references, location: ctx.location, declination, target: star2.name });
+  const model = createModel({ R, points, location: ctx.location, declination, target: star2.name });
   model.persist();
+  ctx.log(describeAlignment(R, declination).summary);
   ctx.log(`Alignment saved to ${ALIGNMENT_FILE.pathname.replace(/^\/([A-Za-z]:)/, '$1')}`);
   return model;
 }
@@ -253,8 +294,8 @@ export async function runTrack(ctx, star, model) {
         } else if (name === 'return') {
           const pair = await capture(ctx, star, 'sync');
           const moved = model.sync(pair);
-          const n = model.references.length;
-          ctx.log(`Synced from ${n} reference target${n === 1 ? '' : 's'}; the model moved by ${formatDeg(moved)}. Resuming tracking.`);
+          const names = model.points.map((p) => p.name).join(' + ');
+          ctx.log(`Synced; the model moved by ${formatDeg(moved)} and now fits ${names}. Resuming tracking.`);
         }
         continue;
       }
@@ -385,12 +426,74 @@ export async function trackCommand(values, name) {
   await withSession(values, location, async (ctx) => {
     const model = createModel({
       R: rec.rotation,
-      references: rec.references ?? [],
+      points: rec.points ?? [],
       location,
       declination: rec.magneticDeclinationDeg,
       target: star.name,
     });
     await gotoStar(ctx, star, model.R);
+    await runTrack(ctx, star, model);
+  });
+}
+
+// A fixed-coordinate target from --ra/--dec: of-date RA/Dec that raDecToAltAz re-projects as the sky turns, so
+// tracking still works within the session (the name is not re-loadable by `track`, which looks targets up by name).
+function manualTarget(values) {
+  if (values.ra === undefined || values.dec === undefined) {
+    throw new Error('align with coordinates needs both --ra and --dec, e.g. align --ra 18:36:56 --dec=+38:47:01');
+  }
+  const raHours = parseHours(values.ra);
+  const decDeg = parseDegrees(values.dec);
+  if (Math.abs(decDeg) > 90) throw new Error('Dec must be within +/-90 degrees');
+  return { name: 'manual target', kind: 'star', raHours, decDeg, raDec: () => ({ raHours, decDeg }) };
+}
+
+// Single-target alignment: home (scope Alt 0 / Az 0) is the anchor and the centred target is the second point.
+// You move the scope to the target by hand (there is no prior model to slew with), then it tracks the target.
+export async function runOneStar(ctx, star, declination) {
+  const R0 = rotationZ(declination);
+  ctx.log(`Move the scope by hand or with the handset to ${star.name}, using the predicted reading below. Press Enter when centred.`);
+  await waitCentred(ctx, star, R0);
+  const p1 = await capture(ctx, star, 'align');
+
+  const home = homePoint(declination);
+  const points = [home, p1];
+  // The star is the measurement, so it is the anchor (kept exact); home fixes the remaining twist.
+  const R = fitTwoPoints(p1, home);
+  const model = createModel({ R, points, location: ctx.location, declination, target: star.name });
+  model.persist();
+  ctx.log(describeAlignment(R, declination).summary);
+  ctx.log(`Alignment saved to ${ALIGNMENT_FILE.pathname.replace(/^\/([A-Za-z]:)/, '$1')}`);
+  return model;
+}
+
+export async function oneStarCommand(values, name) {
+  const haveCoords = values.ra !== undefined || values.dec !== undefined;
+  if (!name && !haveCoords) throw new Error('align needs a target name (e.g. align vega or align jupiter) or --ra and --dec');
+  if (name && haveCoords) throw new Error('Give either a target name or --ra/--dec, not both.');
+  const location = await resolveLocation(values);
+  const now = new Date();
+  const star = haveCoords ? manualTarget(values) : findStar(name, now, location);
+
+  const declination = values.declination !== undefined ? parseDegrees(values.declination) : magneticDeclination(location.latitude, location.longitude, now);
+  console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source})`);
+  console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0: level, pointing magnetic north)`);
+
+  const R0 = rotationZ(declination);
+  const t = starTrueAltAz(star, now, location);
+  const problem = reachProblem(star, t, scopeTarget(R0, t, 0));
+  if (problem) throw new Error(problem);
+  if (t.alt < MIN_ALIGN_ALT_DEG) {
+    throw new Error(`${star.name} is only ${formatDeg(t.alt)} above the horizon; choose an alignment target above ${MIN_ALIGN_ALT_DEG}\u00b0 so refraction and seeing do not spoil the fit.`);
+  }
+
+  await withSession(values, location, async (ctx) => {
+    const start = await ctx.scope.readAltAz();
+    console.log(`Scope reports: Alt ${formatAlt(start.alt, 0)}  Az ${formatAz(start.az, 0)}`);
+    if (Math.abs(start.alt) > HOME_TOLERANCE_DEG || Math.min(start.az, 360 - start.az) > HOME_TOLERANCE_DEG) {
+      throw new Error(`At home the scope should report Alt 0 / Az 0 (within ${HOME_TOLERANCE_DEG}\u00b0). Put it at home and power-cycle the handset, then try again.`);
+    }
+    const model = await runOneStar(ctx, star, declination);
     await runTrack(ctx, star, model);
   });
 }

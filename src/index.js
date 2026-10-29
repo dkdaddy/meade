@@ -1,12 +1,12 @@
 import { parseArgs } from 'node:util';
-import { align, homeCommand, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
+import { homeCommand, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { resolveLocation } from './location.js';
 import { monitor } from './monitor.js';
 import { listStars } from './stars.js';
 import { listPlanets } from './planets.js';
 import { parseDegrees } from './angles.js';
 import { slewCommand, goHomeCommand } from './slew.js';
-import { trackCommand, twoStarCommand } from './twostar.js';
+import { oneStarCommand, trackCommand, twoStarCommand } from './twostar.js';
 
 const USAGE = `Usage:
   node src/index.js monitor [--port COM3] [--interval 500]
@@ -24,21 +24,25 @@ const USAGE = `Usage:
 
 Notes:
   Targets can be catalog stars, major planets (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune), or the Moon.
-  align2 does a two-target alignment, then tracks the second target. It slews to target 1, you centre it with the handset
-  and press Enter, then the same for target 2. The alignment is saved to alignment.json. Quote names with spaces:
-  align2 moon vega or align2 jupiter vega. Pick targets at least 20 deg apart. The scope must read Alt 0 / Az 0 at the start.
+  align does a single-target alignment: home (scope Alt 0 / Az 0) is the anchor, you move the scope by hand to the target
+  and press Enter, and the PC fits a pointing model (home + target) and then tracks the target. The model is saved to
+  alignment.json, including human-readable diagnostics for the scope's levelness and its pointing error at home.
+  align2 does a two-target alignment anchored on target 1 (home is not stored), then tracks the second target. It slews to
+  target 1, you centre it with the handset and press Enter, then the same for target 2. Pick targets at least 20 deg apart.
+  Both align and align2 need the scope to read Alt 0 / Az 0 at the start. The pointing model always holds exactly two points.
   track [target] loads the saved alignment, slews to the target (default: the last one) and tracks it. While tracking,
   Enter pauses so you can centre the target by hand and press Enter again to sync; Esc resumes without syncing; q quits.
+  A sync replaces whichever of the two model points is closest in the sky to the fresh measurement; it never adds a third.
   Tracking is done by the PC nudging the scope with move/stop commands; nothing is written to the controller.
   planets lists the Moon and 7 major planets with their magnitude, phase, and current altitude/azimuth.
   stars lists visible solar system bodies (Moon, planets) and the 200 brightest named stars currently usable (altitude ${MIN_ALT_DEG}-${MAX_ALT_DEG} deg).
   Target names are case-insensitive, spaces optional, unique prefixes work (align moon, align jupiter, align vega, align "rigil kent").
   Write negative values with '=', e.g. --dec=-16:42:58 --lon=-0.13
-  This tool only reads from the controller, except slew-alt / slew-az, which send move, stop and move-rate
+  This tool only reads from the controller, except slew-alt / slew-az and tracking, which send move, stop and move-rate
   commands and nothing else (no settings, time, site, target or sync). You move the scope yourself for align.
   slew-alt / slew-az work in the scope's own reported frame (Alt 0 / Az 0 = home), step down through the
   Slew/Move/Center/Guide rates, and stop if a limit is hit (altitude -1..${MAX_ALT_DEG}, azimuth within 300 of home).
-  align expects the scope to report Alt 0 / Az 0 at home (level, pointing magnetic north).
+  align / align2 expect the scope to report Alt 0 / Az 0 at home (level, pointing magnetic north).
   --ra/--dec are taken as of-date; star names are J2000 and are precessed automatically; planets and Moon are computed of-date with topocentric parallax.`;
 
 const { values, positionals } = parseArgs({
@@ -69,7 +73,7 @@ try {
   } else if (command === 'go-home' || command === 'park') {
     await goHomeCommand(values.port);
   } else if (command === 'align') {
-    await align(values, positionals.slice(1).join(' ') || undefined);
+    await oneStarCommand(values, positionals.slice(1).join(' ') || undefined);
   } else if (command === 'align2') {
     await twoStarCommand(values, positionals[1], positionals[2]);
   } else if (command === 'track') {
