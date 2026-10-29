@@ -40,7 +40,7 @@ const signed = (deg) => formatDeg(deg, { signed: true });
 // Coarse phases hold the key at one rate until within `until` degrees of the goal (or the target is overshot);
 // they fail on timeout / stall. The final degree is closed by short measured pulses (see below).
 const PHASES = [
-  { rate: 'S', until: 6, grow: 1.0, maxMs: 120000, strict: true },
+  { rate: 'S', until: 3, grow: 1.0, maxMs: 120000, strict: true },
   { rate: 'M', until: 1, grow: 1.0, maxMs: 60000, strict: true },
 ];
 
@@ -378,9 +378,9 @@ export async function slewCommand(portPath, axisName, target) {
   }
 }
 
-// Drives the scope back to home (Alt 0 / Az 0 in its reported frame): azimuth first, then altitude down to level,
-// so the tube stays raised while it swings round. This trusts the handset's reference (the "current alignment"):
-// reported 0/0 is home only while the handset has not been power-cycled or lost its position.
+// Drives the scope back to home (Alt 0 / Az 0 in its reported frame), moving both axes together. This trusts the
+// handset's reference (the "current alignment"): reported 0/0 is home only while the handset has not been
+// power-cycled or lost its position.
 export async function goHomeCommand(portPath) {
   const scope = new Scope(portPath);
   await scope.open();
@@ -394,9 +394,12 @@ export async function goHomeCommand(portPath) {
     const start = await scope.readAltAz();
     console.log(`Scope reports Alt ${formatAlt(start.alt, 0)} Az ${formatAz(start.az, 0)}. Slewing to home (Alt 0 / Az 0). Ctrl+C stops the scope.`);
     const session = newSession();
-    const onStatus = (s) => process.stdout.write(`\r  ${s.axis} ${s.reading}  to go ${signed(s.toGo)}  rate ${s.rate}   `);
-    await slewAxis(scope, 'az', 0, { onStatus, session });
-    await slewAxis(scope, 'alt', 0, { onStatus, session });
+    const shown = {};
+    const onStatus = (s) => {
+      shown[s.axis] = `${s.axis} ${s.reading} (to go ${signed(s.toGo)})`;
+      process.stdout.write(`\r  ${Object.values(shown).join('  |  ')}  rate ${s.rate}   `);
+    };
+    await slewBoth(scope, { alt: 0, az: 0 }, { onStatus, session });
     const end = await scope.readAltAz();
     console.log(`\nAt home. Scope reads Alt ${formatAlt(end.alt)} Az ${formatAz(end.az)}.`);
   } finally {

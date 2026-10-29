@@ -23,7 +23,7 @@ Run with `npm start -- <command>`. Write negative values with `=`, e.g. `--to=-9
 |---|---|
 | `monitor [--interval 500]` | Reads RA, Dec, Alt, Az, time, date, latitude, longitude in a loop. Default command. |
 | `home` | Read-only check that the scope is currently at home (Alt 0 / Az 0). |
-| `go-home` or `park` | Slews the scope back to home (Alt 0 / Az 0: Azimuth first, then Altitude). |
+| `go-home` or `park` | Slews the scope back to home (Alt 0 / Az 0), moving both axes together. |
 | `planets [--all]` | Lists the Moon and 7 major planets with magnitude, illumination, and current altitude/azimuth. |
 | `stars [--all]` | Lists visible solar system bodies (Moon, planets) and the 200 brightest named stars currently usable (altitude 5-75 deg). |
 | `align <target>` or `align --ra --dec` | Single-target alignment: home (scope Alt 0 / Az 0) is the anchor. You physically set the scope level and pointing north, power-cycle the handset so it reads 0 / 0, and press Enter, it slews to the target, you centre it with the handset and press Enter, a two-point pointing model is fitted and saved, then it tracks the target. |
