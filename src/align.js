@@ -16,7 +16,7 @@ export const MAX_ALT_DEG = 75;
 // The scope must report approximately Alt 0, Az 0 when an alignment starts.
 const HOME_TOLERANCE_DEG = 2;
 
-// Read-only check that the scope is at home (reports Alt 0 / Az 0, i.e. level and pointing magnetic north).
+// Read-only check that the scope is at home (reports Alt 0 / Az 0, i.e. level and pointing true north).
 // Prints the reading and how far off it is; exits non-zero when it is not at home, so it can gate other commands.
 export async function homeCommand(values) {
   const scope = new Scope(values.port);
@@ -30,7 +30,7 @@ export async function homeCommand(values) {
       console.log(`At home: within ${HOME_TOLERANCE_DEG}\u00b0 of Alt 0 / Az 0.`);
     } else {
       console.log(`NOT at home: off by alt ${signed(alt)}, az ${signed(azFromHome)} (tolerance \u00b1${HOME_TOLERANCE_DEG}\u00b0).`);
-      console.log('Put the scope level and pointing magnetic north, then power-cycle the handset so it reads Alt 0 / Az 0.');
+      console.log('Put the scope level and pointing true north, then power-cycle the handset so it reads Alt 0 / Az 0.');
       process.exitCode = 1;
     }
   } finally {

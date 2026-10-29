@@ -17,19 +17,20 @@ const USAGE = `Usage:
   node src/index.js slew-az <deg>       (within 300 of home, e.g. 0-300 or --to=-90)
   node src/index.js planets [--all] [--lat D --lon D]
   node src/index.js stars [--all] [--lat D --lon D]
-  node src/index.js align <target> [--port COM3] [--lat D --lon D] [--declination D]
+  node src/index.js align <target> [--port COM3] [--lat D --lon D]
   node src/index.js align --ra HH:MM:SS --dec=[+-]DD:MM:SS [same options]
-  node src/index.js align2 <target1> <target2> [--port COM3] [--lat D --lon D] [--declination D]
+  node src/index.js align2 <target1> <target2> [--port COM3] [--lat D --lon D]
   node src/index.js track [target] [--port COM3]
 
 Notes:
   Targets can be catalog stars, major planets (Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune), or the Moon.
-  align does a single-target alignment: home (scope Alt 0 / Az 0) is the anchor, you move the scope by hand to the target
+  align does a single-target alignment: home (scope Alt 0 / Az 0) is the anchor. You physically set the scope level and pointing north,
+  power-cycle the handset so it reads Alt 0 / Az 0, and press Enter, it slews to the target assuming home is level and true north, you centre the target with the handset
   and press Enter, and the PC fits a pointing model (home + target) and then tracks the target. The model is saved to
   alignment.json, including human-readable diagnostics for the scope's levelness and its pointing error at home.
   align2 does a two-target alignment anchored on target 1 (home is not stored), then tracks the second target. It slews to
   target 1, you centre it with the handset and press Enter, then the same for target 2. Pick targets at least 20 deg apart.
-  Both align and align2 need the scope to read Alt 0 / Az 0 at the start. The pointing model always holds exactly two points.
+  Both align and align2 need the scope to read Alt 0 / Az 0 at the start (align prompts you to move it there). The pointing model always holds exactly two points.
   track [target] loads the saved alignment, slews to the target (default: the last one) and tracks it. While tracking,
   Enter pauses so you can centre the target by hand and press Enter again to sync; Esc resumes without syncing; q quits.
   A sync replaces whichever of the two model points is closest in the sky to the fresh measurement; it never adds a third.
@@ -42,7 +43,7 @@ Notes:
   commands and nothing else (no settings, time, site, target or sync). You move the scope yourself for align.
   slew-alt / slew-az work in the scope's own reported frame (Alt 0 / Az 0 = home), step down through the
   Slew/Move/Center/Guide rates, and stop if a limit is hit (altitude -1..${MAX_ALT_DEG}, azimuth within 300 of home).
-  align / align2 expect the scope to report Alt 0 / Az 0 at home (level, pointing magnetic north).
+  align / align2 expect the scope to report Alt 0 / Az 0 at home (level, pointing true north).
   --ra/--dec are taken as of-date; star names are J2000 and are precessed automatically; planets and Moon are computed of-date with topocentric parallax.`;
 
 const { values, positionals } = parseArgs({
@@ -54,7 +55,6 @@ const { values, positionals } = parseArgs({
     dec: { type: 'string' },
     lat: { type: 'string' },
     lon: { type: 'string' },
-    declination: { type: 'string' },
     all: { type: 'boolean' },
     to: { type: 'string' },
     help: { type: 'boolean', short: 'h' },

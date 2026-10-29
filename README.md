@@ -26,21 +26,21 @@ Run with `npm start -- <command>`. Write negative values with `=`, e.g. `--to=-9
 | `go-home` or `park` | Slews the scope back to home (Alt 0 / Az 0: Azimuth first, then Altitude). |
 | `planets [--all]` | Lists the Moon and 7 major planets with magnitude, illumination, and current altitude/azimuth. |
 | `stars [--all]` | Lists visible solar system bodies (Moon, planets) and the 200 brightest named stars currently usable (altitude 5-75 deg). |
-| `align <target>` or `align --ra --dec` | Single-target alignment: home (scope Alt 0 / Az 0) is the anchor, you move the scope to the target and press Enter, a two-point pointing model is fitted and saved, then it tracks the target. |
+| `align <target>` or `align --ra --dec` | Single-target alignment: home (scope Alt 0 / Az 0) is the anchor. You physically set the scope level and pointing north, power-cycle the handset so it reads 0 / 0, and press Enter, it slews to the target, you centre it with the handset and press Enter, a two-point pointing model is fitted and saved, then it tracks the target. |
 | `slew-alt <deg>` | Closed-loop slew of altitude to `<deg>` (0 up to, not including, 75), in the scope's own reported frame. |
 | `slew-az <deg>` | Closed-loop slew of azimuth within 300 deg of home (e.g. 0-300 or `--to=-90`). |
 | `align2 <target1> <target2>` | Two-target alignment anchored on target 1 (stars, planets, or Moon, e.g. `align2 moon vega`), then tracks target 2. Targets must be 20+ deg apart. |
 | `track [target]` | Loads `alignment.json`, slews to the target (star, planet, or Moon; default: the last one used) and tracks it. |
 
-Common options: `--port COM3`, `--lat D --lon D`, `--declination D` (override the PC location / magnetic declination).
+Common options: `--port COM3`, `--lat D --lon D` (override the PC location).
 
 ### Alignment and tracking
 
 The pointing model is one 3x3 rotation between the scope's reported Alt/Az and the true Alt/Az, built from **exactly
 two reference points**. It is saved to `alignment.json` together with human-readable diagnostics describing the
-scope's levelness and how far its home pose is from true level / magnetic north.
+scope's levelness and how far its home pose is from true level / true north.
 
-- **`align <target>`** (single target): home (scope Alt 0 / Az 0, assumed level and pointing magnetic north) is one
+- **`align <target>`** (single target): home (scope Alt 0 / Az 0, assumed level and pointing true north) is one
   point; the target you centre is the other. The target reading is kept exact and home fixes the remaining twist.
 - **`align2 <target1> <target2>`** (two targets): both points are real sky targets, anchored on target 1; home is
   not stored. Pick targets 20+ deg apart.
@@ -79,7 +79,7 @@ The saved alignment is only valid until the handset is power-cycled or the scope
 | `src/align.js` | `home` read-only check and the shared limit constants / `alignment.json` path |
 | `src/astro.js` | Sidereal time, RA/Dec to Alt/Az, precession from J2000 |
 | `src/planets.js` | Analytical ephemerides for the Moon & planets (Keplerian orbits, perturbations, topocentric parallax, RA/Dec of date, magnitude) |
-| `src/location.js` | PC position (Windows location service) and magnetic declination (WMM via `geomagnetism`) |
+| `src/location.js` | PC position (Windows location service) |
 | `src/stars.js`, `src/angles.js`, `src/monitor.js` | Target resolution (stars, planets, Moon), angle parsing/formatting, monitor loop |
 
 ## Hardware findings

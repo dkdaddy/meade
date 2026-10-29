@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import geomagnetism from 'geomagnetism';
 import { parseDegrees } from './angles.js';
 
 const SCRIPT = `
@@ -43,7 +42,3 @@ export async function resolveLocation(values) {
   return { ...loc, source: 'Windows location services' };
 }
 
-// Magnetic declination in degrees, positive east (World Magnetic Model).
-export function magneticDeclination(latitude, longitude, date = new Date()) {
-  return geomagnetism.model(date).point([latitude, longitude]).decl;
-}

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { angularSeparationDeg, norm180, norm360, precessFromJ2000, raDecToAltAz } from './astro.js';
 import { formatAlt, formatAz, formatDeg, formatHours, parseDegrees, parseHours } from './angles.js';
 import { ALIGNMENT_FILE, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
-import { magneticDeclination, resolveLocation } from './location.js';
+import { resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
 import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis } from './slew.js';
@@ -75,10 +75,10 @@ async function capture(ctx, star, source) {
   return { role: 'star', name: star.name, kind: star.kind ?? 'star', source, at: at.toISOString(), scope: { alt: r.alt, az: r.az }, true: { alt: t.alt, az: t.az } };
 }
 
-// The home pose as a model point: the scope reads Alt 0 / Az 0 and is assumed level and pointing magnetic north,
-// so its true direction is Alt 0 at an azimuth equal to the magnetic declination.
-export function homePoint(declination) {
-  return { role: 'home', name: 'Home', kind: 'home', source: 'home', at: new Date().toISOString(), scope: { alt: 0, az: 0 }, true: { alt: 0, az: norm360(declination) } };
+// The home pose as a model point: the scope reads Alt 0 / Az 0 and is assumed level and pointing true north,
+// so its true direction is Alt 0, Az 0.
+export function homePoint() {
+  return { role: 'home', name: 'Home', kind: 'home', source: 'home', at: new Date().toISOString(), scope: { alt: 0, az: 0 }, true: { alt: 0, az: 0 } };
 }
 
 async function gotoStar(ctx, star, R) {
@@ -119,35 +119,58 @@ async function waitCentred(ctx, star, R) {
   ctx.status('');
 }
 
+// Shows the live reading until Enter is pressed with the scope reading Alt 0 / Az 0 (within HOME_TOLERANCE_DEG).
+async function waitHome(ctx) {
+  for (;;) {
+    let done = false;
+    const key = ctx.keys.wait(['return']).then((k) => {
+      done = true;
+      return k;
+    });
+    while (!done) {
+      try {
+        const r = await ctx.scope.readAltAz();
+        ctx.status(`scope Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)} | Enter = at home (Alt 0 / Az 0)`);
+      } catch {
+        // ignore a missed poll
+      }
+      await sleepUntil(500, () => done);
+    }
+    if ((await key) === 'interrupt') throw new CancelledError();
+    ctx.status('');
+    const r = await ctx.scope.readAltAz();
+    if (Math.abs(r.alt) <= HOME_TOLERANCE_DEG && Math.min(r.az, 360 - r.az) <= HOME_TOLERANCE_DEG) return r;
+    ctx.log(`Scope reads Alt ${formatAlt(r.alt, 0)} Az ${formatAz(r.az, 0)}, not Alt 0 / Az 0 (within ${HOME_TOLERANCE_DEG}\u00b0). Move it to home and press Enter again.`);
+  }
+}
+
 // Human-readable orientation facts derived from the scope->true rotation R, for the saved file: how far the
 // scope's vertical axis is from true vertical (levelness) and where the home pose (scope Alt 0 / Az 0) actually
-// points relative to true level and magnetic north.
-export function describeAlignment(R, declination) {
-  const decl = declination ?? 0;
+// points relative to true level and true north.
+export function describeAlignment(R) {
   const up = mulMV(R, [0, 0, 1]);
   const levelnessDeg = angleBetweenDeg([0, 0, 1], up);
   const levelLeanAzimuthDeg = norm360(Math.atan2(up[1], up[0]) / RAD);
   const homeTrue = vecToAltAz(mulMV(R, altAzToVec(0, 0)));
   const homeLevelErrorDeg = homeTrue.alt; // + = scope's home points above true level
-  const homeHeadingErrorDeg = norm180(homeTrue.az - decl); // + = east of magnetic north
+  const homeHeadingErrorDeg = norm180(homeTrue.az); // + = east of true north
   const side = (v, pos, neg) => `${formatDeg(Math.abs(v))} ${v >= 0 ? pos : neg}`;
   const lean = levelnessDeg >= 0.05 ? ` (leaning toward Az ${formatAz(levelLeanAzimuthDeg)})` : '';
   const summary =
     `Scope base tilts ${formatDeg(levelnessDeg)} from level${lean}; at home (scope Alt 0 / Az 0) it points ` +
     `true Alt ${formatAlt(homeTrue.alt)} Az ${formatAz(homeTrue.az)} \u2014 ${side(homeLevelErrorDeg, 'above level', 'below level')} and ` +
-    `${side(homeHeadingErrorDeg, 'east of magnetic north', 'west of magnetic north')}.`;
+    `${side(homeHeadingErrorDeg, 'east of true north', 'west of true north')}.`;
   return { levelnessDeg, levelLeanAzimuthDeg, homeTrueAltDeg: homeTrue.alt, homeTrueAzDeg: homeTrue.az, homeLevelErrorDeg, homeHeadingErrorDeg, summary };
 }
 
-function saveAlignment({ location, declination, R, points, target }) {
+function saveAlignment({ location, R, points, target }) {
   const record = {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
     location: { latitude: location.latitude, longitude: location.longitude, source: location.source },
-    magneticDeclinationDeg: declination ?? null,
-    frame: 'x north, y east, z up; true = rotation * scope (scope Alt 0 / Az 0 = home)',
+    frame: 'x true north, y east, z up; true = rotation * scope (scope Alt 0 / Az 0 = home)',
     rotation: R,
-    diagnostics: describeAlignment(R, declination),
+    diagnostics: describeAlignment(R),
     points,
     target: { name: target },
   };
@@ -162,7 +185,7 @@ export function loadAlignment() {
   } catch {
     throw new Error('No saved alignment. Run align <target> or align2 <star1> <star2> first.');
   }
-  if (rec.version !== 1 || !Array.isArray(rec.rotation) || !Array.isArray(rec.points)) {
+  if (rec.version !== 2 || !Array.isArray(rec.rotation) || !Array.isArray(rec.points)) {
     throw new Error('The saved alignment is in an unsupported format. Re-run align <target> or align2 <star1> <star2>.');
   }
   return rec;
@@ -201,13 +224,13 @@ function fitResiduals(points, R) {
 // The pointing model: exactly two reference points and the scope->true rotation they define. A sync replaces the
 // point closest to the fresh measurement in the sky; the retained point is the anchor and the new one ends exact,
 // so the model never grows past two points.
-export function createModel({ R, points, location, declination, target }) {
+export function createModel({ R, points, location, target }) {
   const model = {
     R,
     points,
     target,
     persist() {
-      saveAlignment({ location, declination, R: model.R, points: model.points, target: model.target });
+      saveAlignment({ location, R: model.R, points: model.points, target: model.target });
     },
     sync(pair) {
       const moved = angleBetweenDeg(mulMV(model.R, sVec(pair)), tVec(pair));
@@ -224,7 +247,7 @@ export function createModel({ R, points, location, declination, target }) {
   return model;
 }
 
-export async function runTwoStar(ctx, star1, star2, declination) {
+export async function runTwoStar(ctx, star1, star2) {
   const now = new Date();
   const c1 = targetRaDec(star1, now, ctx.location);
   const c2 = targetRaDec(star2, now, ctx.location);
@@ -233,8 +256,8 @@ export async function runTwoStar(ctx, star1, star2, declination) {
     throw new Error(`${star1.name} and ${star2.name} are only ${formatDeg(sep)} apart; choose targets at least ${MIN_STAR_SEPARATION_DEG}\u00b0 apart for a good alignment.`);
   }
 
-  // Home assumption: scope az 0 is magnetic north, so true az = scope az + declination.
-  let R = rotationZ(declination);
+  // Home assumption: scope az 0 is true north, so the scope frame starts out equal to the true frame.
+  let R = rotationZ(0);
 
   await gotoStar(ctx, star1, R);
   ctx.log('Adjust with the handset until centred, then press Enter.');
@@ -261,9 +284,9 @@ export async function runTwoStar(ctx, star1, star2, declination) {
     ctx.log('WARNING: the separation the scope measured does not match the sky. A wrong target may have been centred, or the scope azimuth may count the other way. Check before trusting the alignment.');
   }
 
-  const model = createModel({ R, points, location: ctx.location, declination, target: star2.name });
+  const model = createModel({ R, points, location: ctx.location, target: star2.name });
   model.persist();
-  ctx.log(describeAlignment(R, declination).summary);
+  ctx.log(describeAlignment(R).summary);
   ctx.log(`Alignment saved to ${ALIGNMENT_FILE.pathname.replace(/^\/([A-Za-z]:)/, '$1')}`);
   return model;
 }
@@ -390,11 +413,10 @@ export async function twoStarCommand(values, name1, name2) {
   const star2 = findStar(name2, now, location);
   if (star1.name === star2.name) throw new Error('Choose two different targets.');
 
-  const declination = values.declination !== undefined ? parseDegrees(values.declination) : magneticDeclination(location.latitude, location.longitude, now);
   console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source})`);
-  console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0: level, pointing magnetic north)`);
+  console.log('Home     : scope Alt 0 / Az 0 = level, pointing true north');
 
-  const R0 = rotationZ(declination);
+  const R0 = rotationZ(0);
   for (const star of [star1, star2]) {
     const t = starTrueAltAz(star, now, location);
     const problem = reachProblem(star, t, scopeTarget(R0, t, 0));
@@ -410,7 +432,7 @@ export async function twoStarCommand(values, name1, name2) {
     if (Math.abs(start.alt) > HOME_TOLERANCE_DEG || Math.min(start.az, 360 - start.az) > HOME_TOLERANCE_DEG) {
       throw new Error(`At home the scope should report Alt 0 / Az 0 (within ${HOME_TOLERANCE_DEG}\u00b0). Put it at home and power-cycle the handset, then try again.`);
     }
-    const model = await runTwoStar(ctx, star1, star2, declination);
+    const model = await runTwoStar(ctx, star1, star2);
     await runTrack(ctx, star2, model);
   });
 }
@@ -428,7 +450,6 @@ export async function trackCommand(values, name) {
       R: rec.rotation,
       points: rec.points ?? [],
       location,
-      declination: rec.magneticDeclinationDeg,
       target: star.name,
     });
     await gotoStar(ctx, star, model.R);
@@ -448,21 +469,25 @@ function manualTarget(values) {
   return { name: 'manual target', kind: 'star', raHours, decDeg, raDec: () => ({ raHours, decDeg }) };
 }
 
-// Single-target alignment: home (scope Alt 0 / Az 0) is the anchor and the centred target is the second point.
-// You move the scope to the target by hand (there is no prior model to slew with), then it tracks the target.
-export async function runOneStar(ctx, star, declination) {
-  const R0 = rotationZ(declination);
-  ctx.log(`Move the scope by hand or with the handset to ${star.name}, using the predicted reading below. Press Enter when centred.`);
+// Single-target alignment: home (scope Alt 0 / Az 0) and the centred target are the two points. You move the scope
+// to home and press Enter, it slews to the target using the home assumption, you centre it with the handset and
+// press Enter, then it tracks the target.
+export async function runOneStar(ctx, star) {
+  const R0 = rotationZ(0);
+  ctx.log('Physically move the scope to level and pointing north, then power the handset off and on so it resets to Alt 0 / Az 0. Press Enter when it reads 0 / 0.');
+  await waitHome(ctx);
+  await gotoStar(ctx, star, R0);
+  ctx.log(`Centre ${star.name} with the handset, then press Enter.`);
   await waitCentred(ctx, star, R0);
   const p1 = await capture(ctx, star, 'align');
 
-  const home = homePoint(declination);
+  const home = homePoint();
   const points = [home, p1];
   // The star is the measurement, so it is the anchor (kept exact); home fixes the remaining twist.
   const R = fitTwoPoints(p1, home);
-  const model = createModel({ R, points, location: ctx.location, declination, target: star.name });
+  const model = createModel({ R, points, location: ctx.location, target: star.name });
   model.persist();
-  ctx.log(describeAlignment(R, declination).summary);
+  ctx.log(describeAlignment(R).summary);
   ctx.log(`Alignment saved to ${ALIGNMENT_FILE.pathname.replace(/^\/([A-Za-z]:)/, '$1')}`);
   return model;
 }
@@ -475,11 +500,10 @@ export async function oneStarCommand(values, name) {
   const now = new Date();
   const star = haveCoords ? manualTarget(values) : findStar(name, now, location);
 
-  const declination = values.declination !== undefined ? parseDegrees(values.declination) : magneticDeclination(location.latitude, location.longitude, now);
   console.log(`Location : ${signed(location.latitude)}, ${signed(location.longitude)}  (${location.source})`);
-  console.log(`Mag decl : ${signed(declination)}  (home = scope Alt 0 / Az 0: level, pointing magnetic north)`);
+  console.log('Home     : scope Alt 0 / Az 0 = level, pointing true north');
 
-  const R0 = rotationZ(declination);
+  const R0 = rotationZ(0);
   const t = starTrueAltAz(star, now, location);
   const problem = reachProblem(star, t, scopeTarget(R0, t, 0));
   if (problem) throw new Error(problem);
@@ -488,12 +512,7 @@ export async function oneStarCommand(values, name) {
   }
 
   await withSession(values, location, async (ctx) => {
-    const start = await ctx.scope.readAltAz();
-    console.log(`Scope reports: Alt ${formatAlt(start.alt, 0)}  Az ${formatAz(start.az, 0)}`);
-    if (Math.abs(start.alt) > HOME_TOLERANCE_DEG || Math.min(start.az, 360 - start.az) > HOME_TOLERANCE_DEG) {
-      throw new Error(`At home the scope should report Alt 0 / Az 0 (within ${HOME_TOLERANCE_DEG}\u00b0). Put it at home and power-cycle the handset, then try again.`);
-    }
-    const model = await runOneStar(ctx, star, declination);
+    const model = await runOneStar(ctx, star);
     await runTrack(ctx, star, model);
   });
 }

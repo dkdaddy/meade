@@ -14,7 +14,7 @@ See README.md for commands and hardware findings. Run with `npm start -- <comman
   `readAltAz`, `command`, `stopAll`) instead. Reads on the real scope are fine.
 - Keep limits: altitude -1..75 (hard stop), azimuth within 300 of home (targets within 300), targets at least 5 deg up (15 deg for `align` / `align2`). Always `stopAll()` in `finally`.
 - The scope must never be pointed down. The user was upset when it did.
-- Home = level, pointing magnetic north, reading Alt 0 / Az 0. Scope az is assumed clockwise; true az of home = magnetic declination.
+- Home = level, pointing true north, reading Alt 0 / Az 0. Everything is relative to true north (no magnetic declination). Scope az is assumed clockwise; true az of home = 0.
 - Do not commit or push unless asked. The repo has local commits only and no remote.
 
 ## Architecture
@@ -29,7 +29,7 @@ See README.md for commands and hardware findings. Run with `npm start -- <comman
 - `twostar.js`: pointing model is a 3x3 rotation `R` (scope frame to true frame; x north, y east, z up) built from **exactly two
   reference points**, fit by `fitTwoPoints(anchor, other)` (`twoPointRotation` in `pointing.js`): the anchor is held exact and the
   rotation twists about the anchor's true axis to bring `other` in (both exact when the measured separation matches the sky).
-  `align` (single target, `runOneStar`): points are home (scope 0/0, true alt 0 / az = declination) and the centred target; the
+  `align` (single target, `runOneStar`): points are home (scope 0/0, true alt 0 / az 0) and the centred target; the
   target is the anchor (kept exact). `align2` (`runTwoStar`): points are target 1 (anchor) and target 2; home is not stored.
   Sync in tracking replaces whichever stored point is closest in the sky (`closestPointIndex`, true-position angle) with the fresh
   measurement, which becomes the anchor (kept exact); the model never grows past two points. `describeAlignment` adds
