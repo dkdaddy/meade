@@ -5,7 +5,7 @@ import { ALIGNMENT_FILE, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
-import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis } from './slew.js';
+import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis, slewBoth } from './slew.js';
 import { openKeys } from './keys.js';
 import { altAzToVec, angleBetweenDeg, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoPointRotation, vecToAltAz } from './pointing.js';
 
@@ -88,13 +88,19 @@ async function gotoStar(ctx, star, R) {
   const problem = reachProblem(star, t, s);
   if (problem) throw new Error(problem);
   ctx.log(`${star.name}: true Alt ${formatAlt(t.alt)} Az ${formatAz(t.az)}; scope should read Alt ${formatAlt(s.alt)} Az ${formatAz(s.az)}. Slewing...`);
-  const opts = {
-    session: ctx.session,
-    isCancelled: () => ctx.ctl.cancelled,
-    onStatus: (st) => ctx.status(`slewing ${st.axis} ${st.reading}  to go ${signed(st.toGo)}  rate ${st.rate}`),
-  };
-  await slewAxis(ctx.scope, 'az', s.azFromHome, opts);
-  await slewAxis(ctx.scope, 'alt', s.alt, opts);
+  const shown = {};
+  await slewBoth(
+    ctx.scope,
+    { alt: s.alt, az: s.azFromHome },
+    {
+      session: ctx.session,
+      isCancelled: () => ctx.ctl.cancelled,
+      onStatus: (st) => {
+        shown[st.axis] = `${st.axis} ${st.reading} (to go ${signed(st.toGo)})`;
+        ctx.status(`slewing ${Object.values(shown).join('  |  ')}  rate ${st.rate}`);
+      },
+    },
+  );
   ctx.status('');
 }
 
