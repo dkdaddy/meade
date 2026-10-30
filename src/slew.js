@@ -358,6 +358,56 @@ export async function slewAxis(scope, axisName, target, { onStatus = () => {}, s
   }
 }
 
+// Tracking nudge: one Center-rate press of the key that moves the axis in direction `dir` (+1 raises the reading,
+// -1 lowers it), released `lead` before `goal`. It never presses the opposite key, so the axis only ever moves one way
+// and gear backlash stays taken up; an overshoot is left for the target to drift into. Needs the direction keys to
+// have been learned already (session.keys). Azimuth goals are unwrapped degrees from home.
+export async function nudgeAxis(scope, axisName, goal, dir, { session, isCancelled = () => false, onStatus = () => {} }) {
+  const axis = AXES[axisName];
+  const keys = session.keys[axisName];
+  if (!keys) throw new Error(`The ${axis.label} direction keys have not been learned yet.`);
+  axis.goal(goal);
+  const readCur = () => axis.read(scope, session, goal);
+  try {
+    let cur = await readCur();
+    const startViolation = axis.violation(cur.deg);
+    if (startViolation) throw new Error(`Refusing to move: ${startViolation}.`);
+    const dist = (goal - cur.deg) * dir;
+    if (dist <= 0) return { final: cur.deg, error: goal - cur.deg, text: cur.text };
+
+    const key = dir > 0 ? keys.increaseKey : keys.decreaseKey;
+    let lead = session.lead[axisName] ?? REFINE_START_LEAD_DEG;
+    const startDeg = cur.deg;
+    const maxMs = axis.startGraceMs + (dist / 0.05) * 1000;
+    const start = Date.now();
+    let moving = false;
+    let trigger = cur;
+    await scope.command(`:R${REFINE_RATE}#`);
+    await scope.command(`:M${key}#`);
+    for (;;) {
+      await sleep(POLL_MS);
+      if (isCancelled()) throw new CancelledError();
+      cur = await readCur();
+      const violation = axis.violation(cur.deg);
+      if (violation) throw new Error(`Stopped: ${violation}.`);
+      onStatus({ axis: axis.label, reading: cur.text, deg: cur.deg, goal, toGo: goal - cur.deg, rate: REFINE_RATE });
+      if ((cur.deg - startDeg) * dir >= 0.002) moving = true;
+      trigger = cur;
+      if (moving && (goal - cur.deg) * dir <= lead) break;
+      if (Date.now() - start > maxMs) break;
+    }
+    await scope.stopAll();
+    await sleep(PULSE_SETTLE_MS);
+    cur = await readCur();
+    const coast = (cur.deg - trigger.deg) * dir;
+    if (moving && coast > 0) lead = Math.min(0.25, Math.max(0.01, coast));
+    session.lead[axisName] = lead;
+    return { final: cur.deg, error: goal - cur.deg, text: cur.text };
+  } finally {
+    await scope.stopAll().catch(() => {});
+  }
+}
+
 export async function slewCommand(portPath, axisName, target) {
   const scope = new Scope(portPath);
   await scope.open();

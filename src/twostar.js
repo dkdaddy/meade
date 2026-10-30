@@ -5,7 +5,7 @@ import { ALIGNMENT_FILE, MAX_ALT_DEG, MIN_ALT_DEG } from './align.js';
 import { resolveLocation } from './location.js';
 import { Scope } from './lx200.js';
 import { findStar } from './stars.js';
-import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, slewAxis, slewBoth } from './slew.js';
+import { AZ_MAX_TARGET_DEG, bestAzFromHome, CancelledError, newSession, nudgeAxis, slewAxis, slewBoth } from './slew.js';
 import { openKeys } from './keys.js';
 import { altAzToVec, angleBetweenDeg, correctionRotation, mulMM, mulMV, rotationZ, transpose, twoPointRotation, vecToAltAz } from './pointing.js';
 
@@ -17,19 +17,19 @@ import { altAzToVec, angleBetweenDeg, correctionRotation, mulMM, mulMV, rotation
 const HOME_TOLERANCE_DEG = 2;
 const MIN_STAR_SEPARATION_DEG = 20;
 const MAX_RESIDUAL_WARN_DEG = 1;
-const TRACK_TRIGGER_DEG = 0.04; // start a correction when the target is this far (about 2.4') from the centre
+// Nudge an axis when the scope has fallen this far (about 1.2') behind the target. Trigger + ahead is about the
+// shortest step a Center-rate press can make (start-up lag plus coast), so going smaller would not nudge more often.
+const TRACK_TRIGGER_DEG = 0.02;
 const TRACK_TOLERANCE_DEG = 0.02;
-// A correction aims the axis one trigger-width ahead of the target (in the drift direction) so the error sweeps
-// symmetrically from -trigger to +trigger, roughly halving how often a pulse is needed. The lead time is derived
-// from the target's measured drift rate and clamped to this window.
+// A nudge aims one trigger-width ahead of the target in the drift direction, so the error sweeps from -trigger to
+// +trigger between nudges. Axes are only ever moved in the drift direction (no hunting back and forth).
 const TRACK_AHEAD_DEG = TRACK_TRIGGER_DEG;
-const TRACK_MIN_LEAD_MS = 1500;
-const TRACK_MAX_LEAD_MS = 20000;
-const TRACK_DRIFT_SAMPLE_MS = 4000; // baseline over which the drift rate is measured
+const TRACK_CATCHUP_DEG = 0.5; // beyond this error (either side) a normal two-way slew is used to re-acquire
+const TRACK_DRIFT_SAMPLE_MS = 4000; // baseline over which the drift direction is measured
+const TRACK_MIN_DRIFT_DEG = 0.0005; // drift over the sample below this counts as stationary
 const TRACK_CYCLE_MS = 1000;
 const MIN_ALIGN_ALT_DEG = 15; // alignment targets should be well up: refraction and seeing blur low targets
 const RAD = Math.PI / 180;
-const clampRange = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const signed = (deg) => formatDeg(deg, { signed: true });
@@ -346,19 +346,23 @@ export async function runTrack(ctx, star, model) {
           `${star.name} target: Alt ${formatAlt(t.alt)} Az ${formatAz(t.az)} | RA ${formatHours(radec.raHours)} Dec ${formatAlt(radec.decDeg)} (of date)\n` +
             `scope Alt ${formatAlt(cur.alt, 0)} Az ${formatAz(cur.az, 0)} | off by alt ${signed(eAlt)} az ${signed(eAz)} | Enter = adjust+sync, q = quit`,
         );
-        if (Math.abs(eAlt) > TRACK_TRIGGER_DEG || Math.abs(eAz) > TRACK_TRIGGER_DEG) {
-          // Aim each axis one trigger-width ahead of the target, timed from that axis's own drift rate, so the error
-          // sweeps symmetrically either side of centre instead of sawtoothing from 0 to the trigger.
-          const dtSec = TRACK_DRIFT_SAMPLE_MS / 1000;
-          const sFut = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + TRACK_DRIFT_SAMPLE_MS), ctx.location), curAz);
-          const leadMs = (deltaDeg) => clampRange((TRACK_AHEAD_DEG * dtSec) / Math.max(Math.abs(deltaDeg), 1e-6) * 1000, TRACK_MIN_LEAD_MS, TRACK_MAX_LEAD_MS);
-          if (Math.abs(eAz) > TRACK_TRIGGER_DEG) {
-            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(sFut.azFromHome - s.azFromHome)), ctx.location), curAz);
-            await slewAxis(ctx.scope, 'az', aim.azFromHome, opts);
+        // Each axis only ever moves the way the target drifts: when the scope falls behind by more than the trigger it
+        // gets one slow Center-rate nudge to a point TRACK_AHEAD_DEG ahead of the target; when it is ahead it waits for
+        // the target to catch up. Only a large error (start-up, sync) gets a full two-way slew.
+        const sFut = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + TRACK_DRIFT_SAMPLE_MS), ctx.location), curAz);
+        const axes = [
+          { name: 'az', err: eAz, goal: s.azFromHome, drift: sFut.azFromHome - s.azFromHome },
+          { name: 'alt', err: eAlt, goal: s.alt, drift: sFut.alt - s.alt },
+        ];
+        for (const a of axes) {
+          if (Math.abs(a.err) > TRACK_CATCHUP_DEG || !ctx.session.keys[a.name]) {
+            if (Math.abs(a.err) > TRACK_TRIGGER_DEG) await slewAxis(ctx.scope, a.name, a.goal, opts);
+            continue;
           }
-          if (Math.abs(eAlt) > TRACK_TRIGGER_DEG) {
-            const aim = scopeTarget(model.R, starTrueAltAz(star, new Date(Date.now() + leadMs(sFut.alt - s.alt)), ctx.location), curAz);
-            await slewAxis(ctx.scope, 'alt', aim.alt, opts);
+          // A (nearly) stationary axis, e.g. altitude at culmination, is corrected toward the error instead.
+          const dir = Math.abs(a.drift) >= TRACK_MIN_DRIFT_DEG ? Math.sign(a.drift) : Math.sign(a.err);
+          if (a.err * dir > TRACK_TRIGGER_DEG) {
+            await nudgeAxis(ctx.scope, a.name, a.goal + dir * TRACK_AHEAD_DEG, dir, opts);
           }
         }
       } catch (err) {

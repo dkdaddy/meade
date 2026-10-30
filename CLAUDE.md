@@ -36,7 +36,9 @@ See README.md for commands and hardware findings. Run with `npm start -- <comman
   human-readable levelness / home-error diagnostics to the saved file (`alignment.json`, version 1). Supports stars, planets, and the
   Moon (`targetRaDec`). `runOneStar`, `runTwoStar` and `runTrack` take a `ctx` (`scope, keys, ctl, location, session, log, status`) so
   they can be driven by a fake scope and fake keys.
-- Tracking is the PC nudging the scope (trigger 0.04 deg, aims ahead based on drift rate). It cannot be smooth with the speeds available.
+- Tracking is the PC nudging the scope (`nudgeAxis`): each axis is only pressed in the target's drift direction at Center rate,
+  when it falls 0.02 deg behind, aiming 0.02 deg ahead; if ahead it waits. Errors over 0.5 deg use a two-way `slewAxis`.
+  It cannot be smooth with the speeds available.
 
 ## Status
 
