@@ -28,7 +28,7 @@ const TRACK_CATCHUP_DEG = 0.5; // beyond this error (either side) a normal two-w
 const TRACK_DRIFT_SAMPLE_MS = 4000; // baseline over which the drift direction is measured
 const TRACK_MIN_DRIFT_DEG = 0.0005; // drift over the sample below this counts as stationary
 const TRACK_CYCLE_MS = 1000;
-const MIN_ALIGN_ALT_DEG = 15; // alignment targets should be well up: refraction and seeing blur low targets
+const MIN_ALIGN_ALT_DEG = 10; // alignment targets should be well up: refraction and seeing blur low targets
 const RAD = Math.PI / 180;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

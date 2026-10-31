@@ -62,7 +62,7 @@ The saved alignment is only valid until the handset is power-cycled or the scope
   read commands (`:G...#`, through `Scope.query()`) and motion commands (move, stop, move-rate, through `Scope.command()`).
   Both channels are whitelisted by regex in `src/lx200.js`.
 - Limits: altitude -1 to 75 deg (hard stop), azimuth within 300 deg of home (hard stop). Slews refuse to start if the scope is
-  already outside them. Alignment targets must be at least 5 deg above the horizon (15 deg for `align` / `align2`).
+  already outside them. Alignment targets must be at least 5 deg above the horizon (10 deg for `align` / `align2`).
 - Ctrl+C stops all motion. Every slew and track ends with a stop on all axes.
 - The handset's speed setting is changed by the rate commands (`:RS#`, `:RM#`, `:RC#`).
 

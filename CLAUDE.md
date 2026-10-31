@@ -12,7 +12,7 @@ See README.md for commands and hardware findings. Run with `npm start -- <comman
   Do not loosen these regexes.
 - **Do not move the real scope without the user asking.** Test motion logic against a fake scope (implement `readAlt`, `readAz`,
   `readAltAz`, `command`, `stopAll`) instead. Reads on the real scope are fine.
-- Keep limits: altitude -1..75 (hard stop), azimuth within 300 of home (targets within 300), targets at least 5 deg up (15 deg for `align` / `align2`). Always `stopAll()` in `finally`.
+- Keep limits: altitude -1..75 (hard stop), azimuth within 300 of home (targets within 300), targets at least 5 deg up (10 deg for `align` / `align2`). Always `stopAll()` in `finally`.
 - The scope must never be pointed down. The user was upset when it did.
 - Home = level, pointing true north, reading Alt 0 / Az 0. Everything is relative to true north (no magnetic declination). Scope az is assumed clockwise; true az of home = 0.
 - Do not commit or push unless asked. The repo has local commits only and no remote.
