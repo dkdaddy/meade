@@ -1,85 +1,71 @@
 {
-  "version": 3,
-  "savedAt": "2026-10-28T19:22:15.150Z",
+  "version": 2,
+  "savedAt": "2026-10-31T04:29:25.294Z",
   "location": {
-    "latitude": 51.4489,
-    "longitude": -0.0788,
+    "latitude": 51.45301,
+    "longitude": -0.08477,
     "source": "Windows location services"
   },
-  "magneticDeclinationDeg": 1.2369303334934305,
-  "frame": "x north, y east, z up; true = rotation * scope (scope az 0 / alt 0 = home)",
+  "frame": "x true north, y east, z up; true = rotation * scope (scope Alt 0 / Az 0 = home)",
   "rotation": [
     [
-      0.9989167443050454,
-      -0.04460917760325232,
-      0.013242326856332386
+      0.9977878996110775,
+      0.04224601119569795,
+      0.05132817869131495
     ],
     [
-      0.04448314882172386,
-      0.9989633915145775,
-      0.009663947671444224
+      -0.04586639618613066,
+      0.9963830150537379,
+      0.0715343345067229
     ],
     [
-      -0.013659700505970464,
-      -0.009064418748797248,
-      0.9998656154178085
+      -0.04812048514522156,
+      -0.07373033195690765,
+      0.9961165880854072
     ]
   ],
-  "references": [
+  "diagnostics": {
+    "levelnessDeg": 5.051088817468358,
+    "levelLeanAzimuthDeg": 54.339347636100115,
+    "homeTrueAltDeg": -2.758165865601416,
+    "homeTrueAzDeg": 357.3680756629696,
+    "homeLevelErrorDeg": -2.758165865601416,
+    "homeHeadingErrorDeg": -2.631924337030341,
+    "summary": "Scope base tilts 5°03'03.9\" from level (leaning toward Az 54°20'21.7\"); at home (scope Alt 0 / Az 0) it points true Alt -2°45'29.4\" Az 357°22'05.1\" — 2°45'29.4\" below level and 2°37'54.9\" west of true north."
+  },
+  "points": [
     {
-      "star": "Mizar",
-      "kind": "align",
-      "at": "2026-10-28T05:46:01.321Z",
+      "role": "home",
+      "name": "Home",
+      "kind": "home",
+      "source": "home",
+      "at": "2026-10-31T04:09:00.019Z",
       "scope": {
-        "alt": 45.269444444444446,
-        "az": 52.16
+        "alt": 0,
+        "az": 0
       },
       "true": {
-        "alt": 45.43445822076217,
-        "az": 53.53496364284575
+        "alt": 0,
+        "az": 0
       }
     },
     {
-      "star": "Regulus",
-      "kind": "align",
-      "at": "2026-10-28T05:47:02.178Z",
+      "role": "star",
+      "name": "Jupiter",
+      "kind": "planet",
+      "source": "sync",
+      "at": "2026-10-31T04:29:25.040Z",
       "scope": {
-        "alt": 43.81944444444445,
-        "az": 136.78833333333333
+        "alt": 42.36027777777778,
+        "az": 131.36555555555555
       },
       "true": {
-        "alt": 43.88228431293894,
-        "az": 138.56020564994748
-      }
-    },
-    {
-      "star": "Moon",
-      "kind": "sync",
-      "at": "2026-10-28T19:12:46.555Z",
-      "scope": {
-        "alt": 14.663055555555555,
-        "az": 61.15277777777778
-      },
-      "true": {
-        "alt": 12.950942662017313,
-        "az": 63.71511585467715
-      }
-    },
-    {
-      "star": "Moon",
-      "kind": "sync",
-      "at": "2026-10-28T19:22:14.891Z",
-      "scope": {
-        "alt": 15.294444444444444,
-        "az": 62.61666666666667
-      },
-      "true": {
-        "alt": 14.223933730190113,
-        "az": 65.34490714531137
+        "alt": 40.82748299915547,
+        "az": 124.55909374838842
       }
     }
   ],
   "target": {
-    "name": "Moon"
+    "name": "Jupiter"
   }
 }
